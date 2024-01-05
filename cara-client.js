@@ -290,7 +290,7 @@ async function make_game(version,addr,port,sess,cid,script_file,enable_map) {
 
     console.log(
       fgColorString,
-      character ? character.name : "Unknown",
+      character ? character.name + ' | ' : "",
       message
     );
   };
@@ -298,6 +298,9 @@ async function make_game(version,addr,port,sess,cid,script_file,enable_map) {
   vm.runInContext(`add_log = ${add_log.toString()}`, game_context);
 
   vm.runInContext("show_json = function(json) {console.log('show_json',json);}",game_context);
+
+  vm.runInContext(`set_message = ${add_log.toString()}`,game_context);
+
   process.send({type: "initialized"});
   process.on("message", (m) => {
     switch (m.type) {
