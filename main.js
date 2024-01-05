@@ -11,6 +11,10 @@ const fs_regular = require('node:fs');
 
 const FileStoredKeyValues = require("./src/FileStoredKeyValues");
 
+
+const test = process.argv[2] === "test"
+const test_script = test ? `caracAL/tests/${process.argv[3]}.js` : "";
+
 //TODO check for invalid session
 //TODO improve termination
 //MAYBE improve linux service
@@ -332,14 +336,23 @@ function migrate_old_storage(path, localStorage) {
     console.log("now truly exiting");
     process.exit();
   }));
-  
-  const tasks = Object.keys(character_manage).forEach(c_name=>{
-    const char = character_manage[c_name];
-    char.connected = false;
-    if(char.enabled) {
-      start_char(c_name);
-    }
-  });
+
+  if (test) {
+    const char_name = Object.keys(character_manage)[0];
+    const char_block = character_manage[char_name];
+    char_block.script = test_script;
+    start_char(char_name);
+  }
+  else {
+    const tasks = Object.keys(character_manage).forEach(c_name=>{
+      const char = character_manage[c_name];
+      char.connected = false;
+      if(char.enabled) {
+        start_char(c_name);
+      }
+    });
+  }
+
   my_acc.add_listener(update_siblings_and_acc);
 })().catch(e => {
   console.error("failed to start caracAL", e);

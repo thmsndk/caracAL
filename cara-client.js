@@ -9,6 +9,69 @@ const fetch = require('node-fetch');
 const monitoring_util = require("./monitoring_util");
 const ipc_storage = require("./ipcStorage");
 
+// monkey patch console colors
+// https://stackoverflow.com/a/50325607/28145
+const colors = {
+  Reset: "\x1b[0m",
+  Bright: "\x1b[1m",
+  Dim: "\x1b[2m",
+  Underscore: "\x1b[4m",
+  Blink: "\x1b[5m",
+  Reverse: "\x1b[7m",
+  Hidden: "\x1b[8m",
+  
+  FgBlack: "\x1b[30m",
+  FgRed: "\x1b[31m",
+  FgGreen: "\x1b[32m",
+  FgYellow: "\x1b[33m",
+  FgBlue: "\x1b[34m",
+  FgMagenta: "\x1b[35m",
+  FgCyan: "\x1b[36m",
+  FgWhite: "\x1b[37m",
+  FgGray: "\x1b[90m",
+  
+  BgBlack: "\x1b[40m",
+  BgRed: "\x1b[41m",
+  BgGreen: "\x1b[42m",
+  BgYellow: "\x1b[43m",
+  BgBlue: "\x1b[44m",
+  BgMagenta: "\x1b[45m",
+  BgCyan: "\x1b[46m",
+  BgWhite: "\x1b[47m",
+  FgGray: "\x1b[100m",
+}
+const cLog = console.log
+console.log = function () {
+  cLog.apply(this, [new Date().toISOString(),...arguments,colors.Reset]);
+};
+
+const cError = console.error
+console.error = function () {
+  cError.apply(this, [colors.FgRed,"🔴",new Date().toISOString(),...arguments,colors.Reset]);
+};
+
+const cWarn = console.warn
+console.warn = function () {
+  cWarn.apply(this, [colors.FgYellow,"⚠️",new Date().toISOString(),...arguments,colors.Reset]);
+};
+
+// const cInfo = console.info
+// console.info = function () {
+//   cInfo.apply(this, [colors.FgCyan,"ℹ️",...arguments,colors.Reset]);
+// };
+
+const cDebug = console.debug
+console.debug = function () {
+  cDebug.apply(this, [colors.FgCyan,"🛠️",new Date().toISOString(),...arguments,colors.Reset]);
+};
+// console.success = function () {
+  
+// };
+// console.ok = function () {
+  
+// };
+
+
 process.on('unhandledRejection', function (exception) {
   console.warn("promise rejected: \n",exception);
 });
@@ -199,7 +262,41 @@ async function make_game(version,addr,port,sess,cid,script_file,enable_map) {
   }
   //call_code_function("trigger_character_event","cm",{name:data.name,message:JSON.parse(data.message)});
 
-  vm.runInContext("add_log = console.log",game_context);
+  const add_log = function (message, color) {
+    let fgColorString = "";
+    
+    if (color) {
+      if (color.startsWith("#")) {
+        // https://stackoverflow.com/a/59395813/28145
+        const hex = color.substring(1);
+
+        let red = parseInt(hex.substr(0, 2), 16);
+        let green = parseInt(hex.substr(2, 2), 16);
+        let blue = parseInt(hex.substr(4, 2), 16);
+
+        fgColorString = `\x1b[38;2;${red};${green};${blue}m`;
+        // bgColorString = `\x1b[48;2;${red};${green};${blue}m`;
+      } else {
+        switch (color) {
+          case "white":
+            fgColorString = colors.FgWhite;
+            break;
+          case "grey":
+            fgColorString = colors.FgGray;
+            break;
+        }
+      }
+    }
+
+    console.log(
+      fgColorString,
+      character ? character.name : "Unknown",
+      message
+    );
+  };
+
+  vm.runInContext(`add_log = ${add_log.toString()}`, game_context);
+
   vm.runInContext("show_json = function(json) {console.log('show_json',json);}",game_context);
   process.send({type: "initialized"});
   process.on("message", (m) => {
