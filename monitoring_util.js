@@ -51,25 +51,33 @@ function register_stat_beat(g_con) {
   }, STAT_BEAT_INTERVAL);
 }
 
-//g_child is a child process with a stat beat
+// child_block is a child process with a stat beat
 function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let xp_histo = [];
   let xp_ph = 0;
   let gold_histo = [];
   let last_beat = null;
+
+  // register_stat_beat will trigger a specific message
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
       gold_histo.push(m.gold);
       gold_histo = gold_histo.slice(-100);
+
       if (last_beat && last_beat.level != m.level) {
+        // clear xp history when we level up
         xp_histo = [];
       }
+
       xp_histo.push(m.xp);
       xp_histo = xp_histo.slice(-100);
+
       xp_ph = val_ph(xp_histo);
+
       last_beat = m;
     }
   });
+
   function quick_bar_val(num, denom, humanize = false) {
     let modif = (x) => x;
     if (humanize) {
@@ -77,6 +85,12 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     }
     return [(100 * num) / denom, `${modif(num)}/${modif(denom)}`];
   }
+
+  /**
+   * returns a value per hour, per stat beat interval
+   * @param {*} arr
+   * @returns
+   */
   function val_ph(arr) {
     if (arr.length < 2) {
       return 0;
@@ -87,6 +101,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       STAT_BEAT_INTERVAL
     );
   }
+
   const schema = [
     { name: "name", type: "text", label: "Name", getter: () => char_name },
     {
@@ -187,6 +202,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         ),
     },
   ];
+
   if (enable_map) {
     schema.push({
       name: "minimap",
@@ -196,27 +212,121 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       getter: () => last_beat.mmap,
     });
   }
+
+  // main interface
   const ui = bwi.publisher.createInterface(
-    schema.map((x) => ({
-      name: x.name,
-      type: x.type,
-      label: x.label,
-      options: x.options,
-    })),
+    [
+      { name: "character", type: "botUI" },
+      { name: "target", type: "botUI" },
+      // TODO: minimap? before or after loot? before target?
+      { name: "loot", type: "botUI" },
+    ],
+    // schema.map((x) => ({
+    //   name: x.name,
+    //   type: x.type,
+    //   label: x.label,
+    //   options: x.options,
+    // })),
   );
-  ui.setDataSource(() => {
+
+  // TODO: show realm / server
+  let characterBotUI = ui.createSubBotUI(
+    [
+      // [characterName] [status] [level]
+      { name: "header", type: "leftMiddleRightText" },
+      // TODO: last N status messages?
+      // TODO: Party Leader?
+      // TODO: party stats?
+      // TODO: current map?
+      {
+        name: "health",
+        type: "labelProgressBar",
+        label: "Health",
+        options: { color: "red" },
+      },
+      {
+        name: "mana",
+        type: "labelProgressBar",
+        label: "Mana",
+        options: { color: "blue" },
+      },
+      {
+        name: "xp",
+        type: "labelProgressBar",
+        label: "XP",
+        options: { color: "green" },
+        // TODO: render TTLU on right side, need a new component for that
+      },
+      { name: "xpText", type: "leftMiddleRightText" },
+      {
+        name: "inv",
+        type: "labelProgressBar",
+        label: "Inventory",
+        options: { color: "brown" },
+      },
+      {
+        name: "gold",
+        type: "leftMiddleRightText",
+      },
+      {
+        name: "timers",
+        type: "timerList",
+      },
+    ],
+    "character",
+  );
+
+  characterBotUI.setDataSource(() => {
     if (!last_beat) {
       return {
-        name: char_name,
-        realm: child_block.realm,
-        not_rip: "Hopefully",
-        current_status: "Loading...",
+        // [characterName] [status] [level]
+        header: { left: char_name, middle: "Loading...", right: "" },
       };
     }
-    const result = {};
-    schema.forEach((x) => (result[x.name] = x.getter()));
-    return result;
+
+    return {
+      header: {
+        left: char_name,
+        middle: last_beat.rip ? "💀" : last_beat.current_status,
+        right: last_beat.level,
+      },
+      health: quick_bar_val(last_beat.hp, last_beat.max_hp),
+      mana: quick_bar_val(last_beat.mp, last_beat.max_mp),
+      xp: quick_bar_val(last_beat.xp, last_beat.max_xp, true),
+      xpText: {
+        left: `XP/h ${humanize_int(xp_ph, 1)}`,
+        middle: "",
+        right: `${
+          (xp_ph <= 0 && "N/A") ||
+          prettyMilliseconds(
+            ((last_beat.max_xp - last_beat.xp) * 3600000) / xp_ph,
+            { unitCount: 2 },
+          )
+        } TTLU`,
+      },
+      inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
+      gold: {
+        left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
+        middle: "",
+        right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
+      },
+      timers: last_beat.s,
+    };
   });
+  // ui.setDataSource(() => {
+  //   if (!last_beat) {
+  //     return {
+  //       name: char_name,
+  //       realm: child_block.realm,
+  //       not_rip: "Hopefully",
+  //       current_status: "Loading...",
+  //     };
+  //   }
+  //   const result = {};
+  //   schema.forEach((x) => (result[x.name] = x.getter()));
+  //   return result;
+  // });
+  // TODO: return something that can call destroy on each interface
   return ui;
 }
 
