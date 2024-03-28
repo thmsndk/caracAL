@@ -21,11 +21,58 @@ function humanize_int(num, digits) {
     : num.toExponential(digits);
 }
 
-function register_stat_beat(g_con) {
-  g_con.caracAL.stat_beat = setInterval(() => {
-    const character = g_con.character;
+function register_stat_beat(game_context) {
+  // TODO: register a loot / drop handler so we can display what we looted
+
+  function scqMapGData(propKey, props) {
+    switch (propKey) {
+      case "s":
+        // s is conditions or buffs
+        if (Object.keys(props).length === 0) return;
+
+        const gConditions = game_context.G.conditions;
+        const result = {};
+
+        for (const key in props) {
+          const prop = props[key];
+
+          if (typeof prop === "boolean") {
+            // TODO: should we map to the same data structure? it's not on a timer if it has no ms
+            result[key] = prop;
+          } else {
+            const gCondition = gConditions[prop.name];
+            const newProp = { ...prop };
+            newProp.name = gCondition?.name ?? prop.name ?? key;
+            newProp.ims =
+              gCondition?.duration ?? 12000; /* citizen aura default ms */
+            result[key] = newProp;
+          }
+        }
+
+        return result;
+    }
+
+    // c is channeled actions, like fishing
+    // "town": {"ms":3000}, // Set when "town" portal is in progress
+    // "revival": {ms:8000,f:"PriestName"}, // Set when revival is in progress
+
+    // q is progressed actions, upgrade, compound, exchange
+    // "upgrade": {"ms":2000,"len":2000,"num":5}, // Item at inventory position #5 is being upgraded
+    // "compound": {"ms":8000,"len":10000,"num":0}, // Item at inventory position #0 is being compounded
+    // "exchange": {"ms":3000,name:"gem0","num":12}, // A "gem0" exchange is in progress
+
+    return props;
+  }
+
+  game_context.caracAL.stat_beat = setInterval(() => {
+    const character = game_context.character;
     const result = { type: "stat_beat" };
-    [
+
+    const entityProps = [
+      "id",
+      "name",
+      "type",
+      "mtype",
       "rip",
       "hp",
       "max_hp",
@@ -34,19 +81,41 @@ function register_stat_beat(g_con) {
       "level",
       "xp",
       "max_xp",
-      "gold",
+      "target",
+      "s", // Conditions or Buffs
+      "c", // Channeling actions
+      "q", // Progressed actions
       "party",
-      "isize",
-      "esize",
-    ].forEach((x) => (result[x] = character[x]));
-    const targeting = g_con.entities[character.target];
-    result.t_mtype = (targeting && targeting.mtype) || null;
-    result.t_name = (targeting && targeting.name) || null;
-    result.current_status = g_con.current_status;
-    if (g_con.caracAL.map_enabled()) {
-      result.mmap =
-        "data:image/png;base64," + generate_minimap(g_con).toString("base64");
+    ];
+
+    // console.log(character);
+    [...entityProps, "gold", "isize", "esize"].forEach((x) => {
+      if (x === "type") return; // don't override result.type, it's the message type
+      // create_monitor_ui does not have the game_context, so we look up values here
+      const propValue = scqMapGData(x, character[x]);
+      result[x] = propValue;
+    });
+
+    const targeting = game_context.entities[character.target];
+    if (targeting) {
+      result.target = {};
+      entityProps.forEach((x) => {
+        // create_monitor_ui does not have the game_context, so we look up values here
+        const propValue = scqMapGData(x, targeting[x]);
+        result.target[x] = propValue;
+      });
+    } else {
+      // target not in entities
+      delete result.target;
     }
+
+    result.current_status = game_context.current_status;
+    if (game_context.caracAL.map_enabled()) {
+      result.mmap =
+        "data:image/png;base64," +
+        generate_minimap(game_context).toString("base64");
+    }
+    // console.warn("stat beat send");
     process.send(result);
   }, STAT_BEAT_INTERVAL);
 }
@@ -58,9 +127,13 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let gold_histo = [];
   let last_beat = null;
 
+  // .instance is the process, I don't think we have access to the game context here
+  // console.log(child_block.instance.)
+
   // register_stat_beat will trigger a specific message
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
+      // console.warn("stat_beat", m);
       gold_histo.push(m.gold);
       gold_histo = gold_histo.slice(-100);
 
@@ -276,6 +349,21 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     "character",
   );
 
+  function scqTimers(s, c, q) {
+    // s is conditions or buffs
+    // TODO: how do we access G? is it even possible? would like to look up the name and duration
+    // G.conditions has stat information on most conditions
+    // If a condition isn't present, it will likely not be in "s"
+    // "ms" is milliseconds left
+    // "cursed": {"ms":400},
+    // "mluck": {"ms":120000,"f":"MerchantName"},
+    // "citizen0aura": {"ms":12000,"name":"Citizen's Aura","skin":"citizensaura","luck":100},
+    // ^ an example of a dynamically generated status that's not on G.conditions
+    // "invis": false,
+    // c is channeled actions, like fishing
+    // q is progressed actions, upgrade, compound, exchange
+  }
+
   characterBotUI.setDataSource(() => {
     if (!last_beat) {
       return {
@@ -310,7 +398,58 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: "",
         right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
       },
-      timers: last_beat.s,
+      // timers: last_beat.s,
+    };
+  });
+
+  let targetBotUI = ui.createSubBotUI(
+    [
+      { name: "header", type: "leftMiddleRightText" },
+      {
+        name: "health",
+        type: "labelProgressBar",
+        label: "Health",
+        options: { color: "red" },
+      },
+      {
+        name: "mana",
+        type: "labelProgressBar",
+        label: "Mana",
+        options: { color: "blue" },
+      },
+      {
+        name: "timers",
+        type: "timerList",
+      },
+    ],
+    "target",
+  );
+
+  targetBotUI.setDataSource(() => {
+    if (!last_beat) {
+      return {
+        // [characterName] [status] [level]
+        header: { left: "", middle: "Loading...", right: "" },
+      };
+    }
+
+    const entity = last_beat.target;
+
+    if (!entity) {
+      return {
+        header: { left: "", middle: "No Target", right: "" },
+      };
+    }
+
+    return {
+      header: {
+        left: entity.name,
+        middle: entity.rip ? "💀" : entity.target ?? "",
+        right: entity.level,
+      },
+      health: quick_bar_val(entity.hp, entity.max_hp),
+      mana: quick_bar_val(entity.mp, entity.max_mp),
+      // timers: entity.s,
     };
   });
   // ui.setDataSource(() => {
