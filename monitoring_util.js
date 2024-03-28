@@ -64,9 +64,33 @@ function register_stat_beat(game_context) {
     return props;
   }
 
+  let loot = [];
+  game_context.character.on("loot", function (data) {
+    if (!data.items) return;
+    for (const itemInfo of data.items) {
+      if (itemInfo.looter === game_context.character.name) {
+        itemInfo.gName =
+          game_context.G.items[itemInfo.name]?.name ?? itemInfo.name;
+
+        loot.push({ time: new Date(), ...itemInfo });
+      }
+    }
+  });
+
   game_context.caracAL.stat_beat = setInterval(() => {
-    const character = game_context.character;
     const result = { type: "stat_beat" };
+
+    const time = new Date();
+    loot = loot.filter((item) => {
+      return (
+        time.getTime() - item.time.getTime() <
+        12 * 60 * 60 * 1000 /* 12 hours */
+      );
+    });
+
+    result.loot = loot;
+
+    const character = game_context.character;
 
     const entityProps = [
       "id",
@@ -452,6 +476,29 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       // timers: entity.s,
     };
   });
+
+  let lootBotUI = ui.createSubBotUI(
+    [
+      {
+        name: "loot",
+        type: "table",
+        label: "Looted (12h)",
+        headers: ["When", "Item", "#"],
+      }, // TODO: left label and right label?
+    ],
+    "loot",
+  );
+
+  lootBotUI.setDataSource(() => {
+    if (!last_beat) {
+      return {};
+    }
+
+    return {
+      loot: last_beat.loot.map((x) => [timeAgo(x.time), x.gName, x.q ?? 1]),
+    };
+  });
+
   // ui.setDataSource(() => {
   //   if (!last_beat) {
   //     return {
@@ -467,6 +514,24 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // });
   // TODO: return something that can call destroy on each interface
   return ui;
+}
+
+// https://stackoverflow.com/a/74456486
+function timeAgo(date) {
+  var seconds = Math.floor(
+    (new Date().getTime() - new Date(date).getTime()) / 1000,
+  );
+  var interval = seconds / 31536000;
+  if (interval > 1) return Math.floor(interval) + " years";
+  interval = seconds / 2592000;
+  if (interval > 1) return Math.floor(interval) + " months";
+  interval = seconds / 86400;
+  if (interval > 1) return Math.floor(interval) + " days";
+  interval = seconds / 3600;
+  if (interval > 1) return Math.floor(interval) + " hours";
+  interval = seconds / 60;
+  if (interval > 1) return Math.floor(interval) + " minutes";
+  return Math.floor(seconds) + " seconds";
 }
 
 const mmap_cols = {
