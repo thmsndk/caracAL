@@ -366,7 +366,14 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   function scqTimers(s, c, q) {
-    const timers = [];
+    const timers = [
+      // {
+      //   leftText: "test",
+      //   middleText: msToTime(Math.random() * 50000),
+      //   percentage: msToTime(Math.random() * 50000),
+      //   // TODO: colors? debuff, type? and such?
+      // },
+    ];
     // s is conditions or buffs
     // Q: how do we access G? is it even possible? would like to look up the name and duration
 
