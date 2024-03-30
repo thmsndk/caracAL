@@ -22,8 +22,6 @@ function humanize_int(num, digits) {
 }
 
 function register_stat_beat(game_context) {
-  // TODO: register a loot / drop handler so we can display what we looted
-
   function scqMapGData(propKey, props) {
     switch (propKey) {
       case "s":
@@ -67,13 +65,32 @@ function register_stat_beat(game_context) {
   let loot = [];
   game_context.character.on("loot", function (data) {
     if (!data.items) return;
+    const itemsByKey = {};
     for (const itemInfo of data.items) {
       if (itemInfo.looter === game_context.character.name) {
-        itemInfo.gName =
-          game_context.G.items[itemInfo.name]?.name ?? itemInfo.name;
+        const key = `${itemInfo.name}${itemInfo.p ?? ""}`;
 
-        loot.splice(0, 0, { time: new Date(), ...itemInfo });
+        let data = itemsByKey[key];
+        if (!data) {
+          itemInfo.gName =
+            game_context.G.items[itemInfo.name]?.name ?? itemInfo.name;
+
+          itemInfo.gTitle = getTitleName(itemInfo, game_context.G);
+
+          // const levelString = getLevelString(gItem, itemInfo.level);
+
+          data = { time: new Date(), ...itemInfo };
+          itemsByKey[key] = data;
+        } else {
+          // group the same items in the same chest to a single entry
+          // for example when easter eggs drops
+          data.q += itemInfo.q;
+        }
       }
+    }
+
+    for (const key in itemsByKey) {
+      loot.splice(0, 0, itemsByKey[key]);
     }
   });
 
@@ -110,6 +127,9 @@ function register_stat_beat(game_context) {
       "c", // Channeling actions
       "q", // Progressed actions
       "party",
+      "x",
+      "y",
+      "map",
     ];
 
     // console.log(character);
@@ -120,14 +140,19 @@ function register_stat_beat(game_context) {
       result[x] = propValue;
     });
 
-    const targeting = game_context.entities[character.target];
-    if (targeting) {
+    const targetEntity = game_context.entities[character.target];
+    if (targetEntity) {
       result.target = {};
       entityProps.forEach((x) => {
         // create_monitor_ui does not have the game_context, so we look up values here
-        const propValue = scqMapGData(x, targeting[x]);
+        const propValue = scqMapGData(x, targetEntity[x]);
         result.target[x] = propValue;
       });
+
+      result.target.distance = game_context.simple_distance(
+        character,
+        targetEntity,
+      );
     } else {
       // target not in entities
       delete result.target;
@@ -200,7 +225,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   }
 
   const schema = [
-    { name: "name", type: "text", label: "Name", getter: () => char_name },
     {
       name: "realm",
       type: "text",
@@ -208,95 +232,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       getter: () => child_block.realm,
     },
     {
-      name: "not_rip",
-      type: "text",
-      label: "Alive",
-      getter: () => (last_beat.rip && "No") || "Yes",
-    },
-    {
-      name: "level",
-      type: "text",
-      label: "Level",
-      getter: () => last_beat.level,
-    },
-    {
-      name: "health",
-      type: "labelProgressBar",
-      label: "Health",
-      options: { color: "red" },
-      getter: () => quick_bar_val(last_beat.hp, last_beat.max_hp),
-    },
-    {
-      name: "mana",
-      type: "labelProgressBar",
-      label: "Mana",
-      options: { color: "blue" },
-      getter: () => quick_bar_val(last_beat.mp, last_beat.max_mp),
-    },
-    {
-      name: "xp",
-      type: "labelProgressBar",
-      label: "XP",
-      options: { color: "green" },
-      getter: () => quick_bar_val(last_beat.xp, last_beat.max_xp, true),
-    },
-    {
-      name: "inv",
-      type: "labelProgressBar",
-      label: "Inventory",
-      options: { color: "brown" },
-      getter: () =>
-        quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
-    },
-    {
-      name: "gold",
-      type: "text",
-      label: "Gold",
-      getter: () => humanize_int(last_beat.gold, 1),
-    },
-    {
       name: "party_leader",
       type: "text",
       label: "Chief",
       getter: () => last_beat.party || "N/A",
-    },
-    {
-      name: "current_status",
-      type: "text",
-      label: "Status",
-      getter: () => last_beat.current_status,
-    },
-    {
-      name: "target",
-      type: "text",
-      label: "Target",
-      getter: () =>
-        (last_beat.t_name &&
-          (last_beat.mtype ? "Player " : "") + last_beat.t_name) ||
-        "None",
-    },
-    {
-      name: "gph",
-      type: "text",
-      label: "Gold/h",
-      getter: () => humanize_int(val_ph(gold_histo), 1),
-    },
-    {
-      name: "xpph",
-      type: "text",
-      label: "XP/h",
-      getter: () => humanize_int(xp_ph, 1),
-    },
-    {
-      name: "ttlu",
-      type: "text",
-      label: "TTLU",
-      getter: () =>
-        (xp_ph <= 0 && "N/A") ||
-        prettyMilliseconds(
-          ((last_beat.max_xp - last_beat.xp) * 3600000) / xp_ph,
-          { unitCount: 2 },
-        ),
     },
   ];
 
@@ -353,6 +292,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         label: "XP",
         options: { color: "green" },
         // TODO: render TTLU on right side, need a new component for that
+        // [XP/h][XP][TTLU]
+        // TODO: perhaps xpText is okay, with a chart?
       },
       { name: "xpText", type: "leftMiddleRightText" },
       {
@@ -375,7 +316,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
   function scqTimers(s, c, q) {
     // s is conditions or buffs
-    // TODO: how do we access G? is it even possible? would like to look up the name and duration
+    // Q: how do we access G? is it even possible? would like to look up the name and duration
     // G.conditions has stat information on most conditions
     // If a condition isn't present, it will likely not be in "s"
     // "ms" is milliseconds left
@@ -386,6 +327,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     // "invis": false,
     // c is channeled actions, like fishing
     // q is progressed actions, upgrade, compound, exchange
+    // TODO:  return a list of timers
   }
 
   characterBotUI.setDataSource(() => {
@@ -429,6 +371,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let targetBotUI = ui.createSubBotUI(
     [
       { name: "header", type: "leftMiddleRightText" },
+      { name: "header2", type: "leftMiddleRightText" },
       {
         name: "health",
         type: "labelProgressBar",
@@ -462,6 +405,9 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     if (!entity) {
       return {
         header: { left: "", middle: "No Target", right: "" },
+        header2: { left: "", middle: " ", right: "" },
+        health: [100, " "], // TODO: can we hide the label?
+        mana: [100, " "],
       };
     }
 
@@ -471,20 +417,37 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: entity.rip ? "💀" : entity.target ?? "",
         right: entity.level,
       },
+      header2: {
+        left: entity.mtype ?? "",
+        middle: "",
+        right:
+          entity.distance === 9999999 //Infinity
+            ? "♾️"
+            : `${entity.distance.toFixed()} 📏`,
+      },
       health: quick_bar_val(entity.hp, entity.max_hp),
       mana: quick_bar_val(entity.mp, entity.max_mp),
       // timers: entity.s,
     };
   });
 
+  // TODO: only show if show_loot is on
+  // TODO: show unopened chest count in header
   let lootBotUI = ui.createSubBotUI(
     [
+      // TODO: Pie chart of loot?
+      // TODO: loot/h
       {
         name: "loot",
         type: "table",
         label: "Looted (12h)",
         headers: ["When", "Item", "#"],
       }, // TODO: left label and right label?
+      // [unopened chest(🪅) count][????][total item/quantity count]
+      // 💰📦
+      // 🏴‍☠️📦
+
+      [],
     ],
     "loot",
   );
@@ -495,43 +458,27 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     }
 
     return {
-      loot: last_beat.loot.map((x) => [timeAgo(x.time), x.gName, x.q ?? 1]),
+      loot: last_beat.loot.map((x) => {
+        const titleName = x.gTitle;
+        const itemName = x.gName;
+
+        // const levelString = getLevelString(gItem, itemInfo.level);
+
+        let htmlTitle = itemName;
+        if (titleName) {
+          htmlTitle = `${titleName} ${htmlTitle}`;
+        }
+
+        // if (levelString) {
+        //   htmlTitle = `+${levelString} ${htmlTitle}`;
+        // }
+
+        return [timeAgo(x.time), x.gName, x.q ?? 1];
+      }),
     };
   });
 
-  // ui.setDataSource(() => {
-  //   if (!last_beat) {
-  //     return {
-  //       name: char_name,
-  //       realm: child_block.realm,
-  //       not_rip: "Hopefully",
-  //       current_status: "Loading...",
-  //     };
-  //   }
-  //   const result = {};
-  //   schema.forEach((x) => (result[x.name] = x.getter()));
-  //   return result;
-  // });
-  // TODO: return something that can call destroy on each interface
   return ui;
-}
-
-// https://stackoverflow.com/a/74456486
-function timeAgo(date) {
-  var seconds = Math.floor(
-    (new Date().getTime() - new Date(date).getTime()) / 1000,
-  );
-  var interval = seconds / 31536000;
-  if (interval > 1) return Math.floor(interval) + " years";
-  interval = seconds / 2592000;
-  if (interval > 1) return Math.floor(interval) + " months";
-  interval = seconds / 86400;
-  if (interval > 1) return Math.floor(interval) + " days";
-  interval = seconds / 3600;
-  if (interval > 1) return Math.floor(interval) + " hours";
-  interval = seconds / 60;
-  if (interval > 1) return Math.floor(interval) + " minutes";
-  return Math.floor(seconds) + " seconds";
 }
 
 const mmap_cols = {
@@ -669,6 +616,33 @@ function generate_minimap(game_context) {
   draw_blip(g_char, mmap_cols.character);
 
   return PNG.sync.write(png);
+}
+
+// utils, should perhaps live in another file?
+
+// https://stackoverflow.com/a/74456486
+function timeAgo(date) {
+  var seconds = Math.floor(
+    (new Date().getTime() - new Date(date).getTime()) / 1000,
+  );
+  var interval = seconds / 31536000;
+  if (interval > 1) return Math.floor(interval) + " years";
+  interval = seconds / 2592000;
+  if (interval > 1) return Math.floor(interval) + " months";
+  interval = seconds / 86400;
+  if (interval > 1) return Math.floor(interval) + " days";
+  interval = seconds / 3600;
+  if (interval > 1) return Math.floor(interval) + " hours";
+  interval = seconds / 60;
+  if (interval > 1) return Math.floor(interval) + " minutes";
+  return Math.floor(seconds) + " seconds";
+}
+
+function getTitleName(itemInfo, G) {
+  const titleKey = itemInfo.p;
+  const titleName =
+    titleKey && G.titles[titleKey] ? `${G.titles[titleKey].title}` : "";
+  return titleName;
 }
 
 exports.create_monitor_ui = create_monitor_ui;
