@@ -51,8 +51,18 @@ function register_stat_beat(game_context) {
             const gCondition = gConditions[conditionKey];
             const newProp = { ...prop };
             newProp.name = gCondition?.name ?? prop.name ?? conditionKey;
-            newProp.ims =
-              gCondition?.duration ?? 12000; /* citizen aura default ms */
+
+            switch (conditionKey) {
+              case "young":
+                newProp.ims = 500;
+                break;
+
+              default:
+                newProp.ims =
+                  gCondition?.duration ?? 12000; /* citizen aura default ms */
+                break;
+            }
+
             result[conditionKey] = newProp;
           }
         }
@@ -207,6 +217,18 @@ function register_stat_beat(game_context) {
       // target not in entities
       delete result.target;
     }
+
+    // console.log("chests", game_context.chests);
+    // get chest count, items seems like a count of items in the chest?
+    // skin is the type of chest, it's sometimes 0undefined ??
+    // const now = new Date();
+    result.chests = Object.values(game_context.chests).filter(
+      (chest) => chest.items > 0,
+      // A valid chest has not been looted in the last 1600 ms according to loot()
+      // chest.last_loot &&
+      // now.getTime() - chest.last_loot.getTime() > 1600,
+    ).length;
+    console.log("chests", result.chests);
 
     result.current_status = game_context.current_status;
     if (game_context.caracAL.map_enabled()) {
@@ -524,17 +546,13 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     [
       // TODO: Pie chart of loot?
       // TODO: loot/h
+      { name: "lootHeader", type: "leftMiddleRightText" },
       {
         name: "loot",
         type: "table",
-        label: "Looted (12h)",
+        // label: "Looted (12h)",
         headers: ["When", "Item", "#"],
       }, // TODO: left label and right label?
-      // [unopened chest(🪅) count][????][total item/quantity count]
-      // 💰📦
-      // 🏴‍☠️📦
-
-      [],
     ],
     "loot",
   );
@@ -545,6 +563,17 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     }
 
     return {
+      // [unopened chest(🪅) count][????][total item/quantity count]
+      // 💰📦
+      // 🏴‍☠️📦
+      lootHeader: {
+        left: last_beat.chests ? `${last_beat.chests} 📦` : "",
+        middle: "Looted (12h)",
+        right:
+          last_beat.loot > 0
+            ? `${last_beat.loot.reduce((a, val) => a + val.q, 0)}`
+            : "",
+      },
       loot: last_beat.loot.map((x) => {
         const titleName = x.gTitle;
         const itemName = x.gName;
