@@ -41,19 +41,19 @@ function register_stat_beat(game_context) {
         const gConditions = game_context.G.conditions;
         const result = {};
 
-        for (const key in props) {
-          const prop = props[key];
+        for (const conditionKey in props) {
+          const prop = props[conditionKey];
 
           if (typeof prop === "boolean") {
             // TODO: should we map to the same data structure? it's not on a timer if it has no ms
-            result[key] = prop;
+            result[conditionKey] = prop;
           } else {
-            const gCondition = gConditions[key];
+            const gCondition = gConditions[conditionKey];
             const newProp = { ...prop };
-            newProp.name = gCondition?.name ?? prop.name ?? key;
+            newProp.name = gCondition?.name ?? prop.name ?? conditionKey;
             newProp.ims =
               gCondition?.duration ?? 12000; /* citizen aura default ms */
-            result[key] = newProp;
+            result[conditionKey] = newProp;
           }
         }
 
@@ -372,6 +372,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
     for (const conditionKey in s) {
       const condition = s[conditionKey];
+      // console.log(conditionKey, condition);
       timers.push({
         leftText: condition.name,
         middleText: msToTime(condition.ms),
@@ -403,6 +404,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       });
     }
 
+    // console.warn("timers", timers);
+
     return timers;
   }
 
@@ -411,6 +414,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       return {
         // [characterName] [status] [level]
         header: { left: char_name, middle: "Loading...", right: "" },
+        // timers: [],
       };
     }
 
