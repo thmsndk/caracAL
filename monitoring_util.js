@@ -174,6 +174,7 @@ function register_stat_beat(game_context) {
       "name",
       "type",
       "mtype",
+      "ctype",
       "rip",
       "hp",
       "max_hp",
@@ -336,9 +337,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // TODO: show realm / server
   let characterBotUI = ui.createSubBotUI(
     [
-      // TODO: color characterName by class? or perhaps entire header background?
       // [characterName] [status] [level]
-      { name: "header", type: "leftMiddleRightText" },
+      {
+        name: "header",
+        type: "leftMiddleRightText",
+      },
       // TODO: last N status messages?
       // TODO: Party Leader?
       // TODO: party stats?
@@ -448,6 +451,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         left: char_name,
         middle: last_beat.rip ? "💀" : last_beat.current_status,
         right: last_beat.level,
+        options: {
+          // bgColor: CLASS_COLOR[last_beat.ctype],
+          leftColor: CLASS_COLOR[last_beat.ctype], // looks better with character name class colored than the entire bg
+        },
       },
       health: quick_bar_val(last_beat.hp, last_beat.max_hp),
       mana: quick_bar_val(last_beat.mp, last_beat.max_mp),
@@ -537,7 +544,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   });
 
   // TODO: only show if show_loot is on
-  // TODO: show unopened chest count in header
   let lootBotUI = ui.createSubBotUI(
     [
       // TODO: Pie chart of loot?
@@ -548,7 +554,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         type: "table",
         // label: "Looted (12h)",
         headers: ["When", "Item", "#"],
-      }, // TODO: left label and right label?
+      },
     ],
     "loot",
   );
@@ -731,6 +737,16 @@ function generate_minimap(game_context) {
 }
 
 // utils, should perhaps live in another file?
+
+const CLASS_COLOR = {
+  merchant: "#7f7f7f",
+  mage: "#3e6eed",
+  warrior: "#f07f2f",
+  priest: "#eb4d82",
+  ranger: "#8a512b",
+  paladin: "#a3b4b9",
+  rogue: "#44b75c",
+};
 
 // https://stackoverflow.com/a/74456486
 function timeAgo(date) {
