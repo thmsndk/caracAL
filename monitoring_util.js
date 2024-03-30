@@ -23,7 +23,7 @@ function humanize_int(num, digits) {
 
 function register_stat_beat(game_context) {
   function scqMapGData(propKey, props) {
-    if (!props) return;
+    if (props === undefined) return;
 
     switch (propKey) {
       case "s": {
@@ -387,20 +387,12 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   function scqTimers(s, c, q) {
-    const timers = [
-      // {
-      //   leftText: "test",
-      //   middleText: msToTime(Math.random() * 50000),
-      //   percentage: msToTime(Math.random() * 50000),
-      //   // TODO: colors? debuff, type? and such?
-      // },
-    ];
+    const timers = [];
     // s is conditions or buffs
     // Q: how do we access G? is it even possible? would like to look up the name and duration
 
     for (const conditionKey in s) {
       const condition = s[conditionKey];
-      // console.log(conditionKey, condition);
       timers.push({
         leftText: condition.name,
         middleText: msToTime(condition.ms),
@@ -470,6 +462,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           )
         } TTLU`,
       },
+      // TODO: i've gotten NaN/42 on my warrior?
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
       gold: {
         left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
@@ -548,6 +541,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     [
       // TODO: Pie chart of loot?
       // TODO: loot/h
+      // TODO: chests/h?
       { name: "lootHeader", type: "leftMiddleRightText" },
       {
         name: "loot",
