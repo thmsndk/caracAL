@@ -219,16 +219,12 @@ function register_stat_beat(game_context) {
     }
 
     // console.log("chests", game_context.chests);
-    // get chest count, items seems like a count of items in the chest?
     // skin is the type of chest, it's sometimes 0undefined ??
-    // const now = new Date();
-    result.chests = Object.values(game_context.chests).filter(
+    const chestsWithItems = Object.values(game_context.chests).filter(
       (chest) => chest.items > 0,
-      // A valid chest has not been looted in the last 1600 ms according to loot()
-      // chest.last_loot &&
-      // now.getTime() - chest.last_loot.getTime() > 1600,
-    ).length;
-    console.log("chests", result.chests);
+    );
+    result.chests = chestsWithItems.length;
+    // console.log("chests", result.chestsWithItems);
 
     result.current_status = game_context.current_status;
     if (game_context.caracAL.map_enabled()) {
