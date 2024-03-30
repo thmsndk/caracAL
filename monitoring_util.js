@@ -72,7 +72,7 @@ function register_stat_beat(game_context) {
         itemInfo.gName =
           game_context.G.items[itemInfo.name]?.name ?? itemInfo.name;
 
-        loot.push({ time: new Date(), ...itemInfo });
+        loot.splice(0, 0, { time: new Date(), ...itemInfo });
       }
     }
   });
