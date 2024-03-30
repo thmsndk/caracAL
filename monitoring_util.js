@@ -12,10 +12,12 @@ function humanize_int(num, digits) {
     { value: 1e12, symbol: "Bil" },
     { value: 1e15, symbol: "Tril" },
   ];
+
   const rx = /\.0+$|(\.[0-9]*[1-9])0+$/;
-  var item = lookup.find(function (item) {
+  const item = lookup.find(function (item) {
     return abs(num) < item.value;
   });
+
   return item
     ? ((num * 1e3) / item.value).toFixed(digits).replace(rx, "$1") + item.symbol
     : num.toExponential(digits);
@@ -274,7 +276,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     if (humanize) {
       modif = (x) => humanize_int(x, 1);
     }
-    return [(100 * num) / denom, `${modif(num)}/${modif(denom)}`];
+    return [(100 * num) / denom, `${modif(num)} / ${modif(denom)}`];
   }
 
   /**
@@ -448,8 +450,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           leftColor: CLASS_COLOR[last_beat.ctype], // looks better with character name class colored than the entire bg
         },
       },
-      health: quick_bar_val(last_beat.hp, last_beat.max_hp),
-      mana: quick_bar_val(last_beat.mp, last_beat.max_mp),
+      health: quick_bar_val(last_beat.hp, last_beat.max_hp, true),
+      mana: quick_bar_val(last_beat.mp, last_beat.max_mp, true),
       xp: quick_bar_val(last_beat.xp, last_beat.max_xp, true),
       xpText: {
         left: `XP/h ${humanize_int(xp_ph, 1)}`,
@@ -530,8 +532,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
             ? "♾️"
             : `${entity.distance.toFixed()} 📏`,
       },
-      health: quick_bar_val(entity.hp, entity.max_hp),
-      mana: quick_bar_val(entity.mp, entity.max_mp),
+      health: quick_bar_val(entity.hp, entity.max_hp, true),
+      mana: quick_bar_val(entity.mp, entity.max_mp, true),
       timers: scqTimers(entity.s, entity.c, entity.q),
     };
   });
