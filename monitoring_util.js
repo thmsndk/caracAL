@@ -23,10 +23,20 @@ function humanize_int(num, digits) {
 
 function register_stat_beat(game_context) {
   function scqMapGData(propKey, props) {
+    if (!props) return;
+
     switch (propKey) {
-      case "s":
+      case "s": {
         // s is conditions or buffs
-        if (Object.keys(props).length === 0) return;
+        // G.conditions has stat information on most conditions
+        // If a condition isn't present, it will likely not be in "s"
+        // "ms" is milliseconds left
+        // "cursed": {"ms":400},
+        // "mluck": {"ms":120000,"f":"MerchantName"},
+        // "citizen0aura": {"ms":12000,"name":"Citizen's Aura","skin":"citizensaura","luck":100},
+        // ^ an example of a dynamically generated status that's not on G.conditions
+        // "invis": false,
+        if (Object.keys(props).length === 0) return; // make an empty object undefined
 
         const gConditions = game_context.G.conditions;
         const result = {};
@@ -38,7 +48,7 @@ function register_stat_beat(game_context) {
             // TODO: should we map to the same data structure? it's not on a timer if it has no ms
             result[key] = prop;
           } else {
-            const gCondition = gConditions[prop.name];
+            const gCondition = gConditions[key];
             const newProp = { ...prop };
             newProp.name = gCondition?.name ?? prop.name ?? key;
             newProp.ims =
@@ -48,16 +58,55 @@ function register_stat_beat(game_context) {
         }
 
         return result;
+      }
+
+      case "c": {
+        // c is channeled actions, like fishing
+        // "town": {"ms":3000}, // Set when "town" portal is in progress
+        // "revival": {ms:8000,f:"PriestName"}, // Set when revival is in progress
+        if (Object.keys(props).length === 0) return; // make an empty object undefined
+
+        const gConditions = game_context.G.conditions;
+        const result = {};
+
+        for (const key in props) {
+          const prop = props[key];
+
+          const gCondition = gConditions[key];
+          const newProp = { ...prop };
+          newProp.name = gCondition?.name ?? prop.name ?? key;
+          // TODO: What would be a sane duration fallback if we have no duration?
+          newProp.ims =
+            gCondition?.duration ?? 12000; /* citizen aura default ms */
+          result[key] = newProp;
+        }
+
+        return result;
+      }
+      case "q": {
+        // q is progressed actions, upgrade, compound, exchange
+        // "upgrade": {"ms":2000,"len":2000,"num":5}, // Item at inventory position #5 is being upgraded
+        // "compound": {"ms":8000,"len":10000,"num":0}, // Item at inventory position #0 is being compounded
+        // "exchange": {"ms":3000,name:"gem0","num":12}, // A "gem0" exchange is in progress
+        if (Object.keys(props).length === 0) return; // make an empty object undefined
+
+        const gItems = game_context.G.items;
+        const result = {};
+
+        for (const key in props) {
+          const prop = props[key];
+
+          const gItem = gItems[key];
+          const newProp = { ...prop };
+          newProp.name = gItem?.name ?? prop.name ?? key;
+          // TODO: What would be a sane duration fallback if we have no duration?
+          newProp.ims = prop.len ?? 12000; /* citizen aura default ms */
+          result[key] = newProp;
+        }
+
+        return result;
+      }
     }
-
-    // c is channeled actions, like fishing
-    // "town": {"ms":3000}, // Set when "town" portal is in progress
-    // "revival": {ms:8000,f:"PriestName"}, // Set when revival is in progress
-
-    // q is progressed actions, upgrade, compound, exchange
-    // "upgrade": {"ms":2000,"len":2000,"num":5}, // Item at inventory position #5 is being upgraded
-    // "compound": {"ms":8000,"len":10000,"num":0}, // Item at inventory position #0 is being compounded
-    // "exchange": {"ms":3000,name:"gem0","num":12}, // A "gem0" exchange is in progress
 
     return props;
   }
@@ -85,6 +134,7 @@ function register_stat_beat(game_context) {
           // group the same items in the same chest to a single entry
           // for example when easter eggs drops
           data.q += itemInfo.q;
+          // TODO: group items in a timeframe?
         }
       }
     }
@@ -268,6 +318,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // TODO: show realm / server
   let characterBotUI = ui.createSubBotUI(
     [
+      // TODO: color characterName by class? or perhaps entire header background?
       // [characterName] [status] [level]
       { name: "header", type: "leftMiddleRightText" },
       // TODO: last N status messages?
@@ -315,19 +366,44 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   function scqTimers(s, c, q) {
+    const timers = [];
     // s is conditions or buffs
     // Q: how do we access G? is it even possible? would like to look up the name and duration
-    // G.conditions has stat information on most conditions
-    // If a condition isn't present, it will likely not be in "s"
-    // "ms" is milliseconds left
-    // "cursed": {"ms":400},
-    // "mluck": {"ms":120000,"f":"MerchantName"},
-    // "citizen0aura": {"ms":12000,"name":"Citizen's Aura","skin":"citizensaura","luck":100},
-    // ^ an example of a dynamically generated status that's not on G.conditions
-    // "invis": false,
+
+    for (const conditionKey in s) {
+      const condition = s[conditionKey];
+      timers.push({
+        leftText: condition.name,
+        middleText: msToTime(condition.ms),
+        percentage: (Math.max(0, condition.ms) / condition.ims) * 100,
+        // TODO: colors? debuff, type? and such?
+      });
+    }
+
     // c is channeled actions, like fishing
+    for (const channeldKey in c) {
+      const channel = c[channeldKey];
+      timers.push({
+        leftText: channel.name,
+        middleText: msToTime(channel.ms),
+        percentage: (Math.max(0, channel.ms) / channel.ims) * 100,
+        // TODO: colors? debuff, type? and such?
+      });
+      // TODO: revive has the playername in .f, display it in right text?
+    }
+
     // q is progressed actions, upgrade, compound, exchange
-    // TODO:  return a list of timers
+    for (const actionKey in q) {
+      const action = q[actionKey];
+      timers.push({
+        leftText: action.name,
+        middleText: msToTime(action.ms),
+        percentage: (Math.max(0, action.ms) / action.ims) * 100,
+        // TODO: colors? debuff, type? and such?
+      });
+    }
+
+    return timers;
   }
 
   characterBotUI.setDataSource(() => {
@@ -364,7 +440,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: "",
         right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
       },
-      // timers: last_beat.s,
+      timers: scqTimers(last_beat.s, last_beat.c, last_beat.q),
     };
   });
 
@@ -427,7 +503,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       health: quick_bar_val(entity.hp, entity.max_hp),
       mana: quick_bar_val(entity.mp, entity.max_mp),
-      // timers: entity.s,
+      timers: scqTimers(entity.s, entity.c, entity.q),
     };
   });
 
@@ -636,6 +712,29 @@ function timeAgo(date) {
   interval = seconds / 60;
   if (interval > 1) return Math.floor(interval) + " minutes";
   return Math.floor(seconds) + " seconds";
+}
+
+function msToTime(duration) {
+  const milliseconds = Math.floor((duration % 1000) / 100);
+  const seconds = Math.floor((duration / 1000) % 60);
+  const minutes = Math.floor((duration / (1000 * 60)) % 60);
+  const hours = Math.floor((duration / (1000 * 60 * 60)) % 24);
+
+  const hoursString = hours < 10 ? "0" + hours.toString() : hours.toString();
+  const minutesString =
+    minutes < 10 ? "0" + minutes.toString() : minutes.toString();
+  const secondsString =
+    seconds < 10 ? "0" + seconds.toString() : seconds.toString();
+
+  return (
+    hoursString +
+    ":" +
+    minutesString +
+    ":" +
+    secondsString +
+    "." +
+    milliseconds.toString()
+  );
 }
 
 function getTitleName(itemInfo, G) {
