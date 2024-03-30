@@ -348,6 +348,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       // TODO: Party Leader?
       // TODO: party stats?
       // TODO: current map?
+      // TODO: [goldm][luckm][xpm]
       {
         name: "health",
         type: "labelProgressBar",
@@ -389,6 +390,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   function scqTimers(s, c, q) {
+    // TODO: ignore certain timers via config?
     const timers = [];
     // s is conditions or buffs
     // Q: how do we access G? is it even possible? would like to look up the name and duration
@@ -400,6 +402,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middleText: msToTime(condition.ms),
         percentage: (Math.max(0, condition.ms) / condition.ims) * 100,
         // TODO: colors? debuff, type? and such?
+        // TODO: citizen aura seems to reset to 5000
       });
     }
 
@@ -568,7 +571,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         left: last_beat.chests ? `${last_beat.chests} 📦` : "",
         middle: "Looted (12h)",
         right:
-          last_beat.loot > 0
+          last_beat.loot.length > 0
             ? `${last_beat.loot.reduce((a, val) => a + val.q, 0)}`
             : "",
       },
