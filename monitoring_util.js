@@ -212,6 +212,8 @@ function register_stat_beat(game_context) {
         result.target[x] = propValue;
       });
 
+      // TODO: targets target? so we can render the correct monster type if our target is a party member for example
+
       result.target.distance = game_context.simple_distance(
         character,
         targetEntity,
@@ -323,6 +325,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // main interface
   const ui = bwi.publisher.createInterface(
     [
+      // TODO: server section
+      // realm, events, servertime? night/day?
       { name: "character", type: "botUI" },
       { name: "target", type: "botUI" },
       // TODO: minimap? before or after loot? before target?
@@ -529,7 +533,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       header2: {
         left: entity.mtype ?? "",
-        middle: "",
+        middle: entity.cooperative ? "🤝 co-op 🤝" : "", // TODO: render if mob is coop?
         right:
           entity.distance === 9999999 //Infinity
             ? "♾️"
