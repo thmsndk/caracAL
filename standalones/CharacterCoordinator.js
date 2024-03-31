@@ -95,6 +95,7 @@ function migrate_old_storage(path, localStorage) {
   try {
     if (cfg.web_app && (cfg.web_app.enable_bwi || cfg.web_app.enable_minimap)) {
       bwi_instance = new bwi({
+        title: cfg.web_app.title,
         port: cfg.web_app.port,
         password: null,
         updateRate: STAT_BEAT_INTERVAL,

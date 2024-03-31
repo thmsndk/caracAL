@@ -141,7 +141,7 @@ async function prompt_new_cfg(configPath) {
     console.warn("you did not enable any chars");
     console.log("but you can change that manually in the config file");
   }
-  const { realm, use_bwi, use_minimap, port, typescript_enabled } =
+  const { realm, use_bwi, title, use_minimap, port, typescript_enabled } =
     await inquirer.prompt([
       {
         type: "list",
@@ -160,6 +160,15 @@ async function prompt_new_cfg(configPath) {
         name: "use_bwi",
         message: "Do you want to use the web monitoring panel?",
         choices: yesno_choice,
+      },
+      {
+        type: "string",
+        name: "title",
+        message: "What title would you like for the web panel?",
+        when(answers) {
+          return answers.use_bwi;
+        },
+        default: "Bot Controller",
       },
       {
         type: "list",
@@ -202,6 +211,8 @@ If you want max performance you should choose no.`,
       ["node", "./standalones/LogPrinter.js"],
     ],
     web_app: {
+      // TODO: title
+      title,
       enable_bwi: use_bwi,
       enable_minimap: use_minimap || false,
       expose_CODE: false,
@@ -296,6 +307,8 @@ module.exports = {
     ["node", "./standalones/LogPrinter.js"],
   ])},
   web_app: {
+    // title of the bot web interface
+    ${ezpz("web_app.title", "Bot Controller")},
     //enables the monitoring dashboard
     ${ezpz("web_app.enable_bwi", false)},
     //enables the minimap in dashboard

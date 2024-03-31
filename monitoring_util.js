@@ -65,6 +65,9 @@ function register_stat_beat(game_context) {
                 break;
             }
 
+            // TODO: citizen0aura is a dynamic aura that does not exist in condition, but the  key is [npcKey]aura so we can look up the npc name in G.npc
+            // perhaps we want to look more into data of the aura to see what it changes?
+
             result[conditionKey] = newProp;
           }
         }
@@ -409,6 +412,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         percentage: (Math.max(0, condition.ms) / condition.ims) * 100,
         // TODO: colors? debuff, type? and such?
         // TODO: citizen aura seems to reset to 5000
+        // TODO: citizen0aura is a dynamic aura, we have added the npc name to display in rightText
       });
     }
 
@@ -421,7 +425,9 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         percentage: (Math.max(0, channel.ms) / channel.ims) * 100,
         // TODO: colors? debuff, type? and such?
       });
-      // TODO: revive has the playername in .f, display it in right text?
+      // TODO: revive has the playername in .f, display it in right text?,
+      // color the font / bar depending on what prop the aura gives?
+      // luck = green?
     }
 
     // q is progressed actions, upgrade, compound, exchange
