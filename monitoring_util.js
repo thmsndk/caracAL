@@ -201,12 +201,31 @@ function register_stat_beat(game_context) {
     ];
 
     // console.log(character);
-    [...entityProps, "gold", "isize", "esize"].forEach((x) => {
+    [
+      ...entityProps,
+      "ping",
+      "gold",
+      "isize",
+      "esize",
+      "goldm",
+      "luckm",
+      "xpm",
+    ].forEach((x) => {
       if (x === "type") return; // don't override result.type, it's the message type
       // create_monitor_ui does not have the game_context, so we look up values here
       const propValue = scqMapGData(x, character[x]);
       result[x] = propValue;
     });
+
+    const { pings, server_region, server_identifier, X } = game_context;
+
+    const server = X.servers.find(
+      (x) => x.key === server_region + server_identifier,
+    );
+
+    result.pings = pings;
+    result.server_players = server.players;
+    // server_name is the full server name Europas I
 
     const targetEntity = game_context.entities[character.target];
     if (targetEntity) {
@@ -247,7 +266,14 @@ function register_stat_beat(game_context) {
   }, STAT_BEAT_INTERVAL);
 }
 
-// child_block is a child process with a stat beat
+/**
+ *
+ * @param {*} bwi
+ * @param {*} char_name
+ * @param { {instance: any, realm:string} } child_block child_block is a child process with a stat beat
+ * @param {*} enable_map
+ * @returns
+ */
 function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let xp_histo = [];
   let xp_ph = 0;
@@ -304,12 +330,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
   const schema = [
     {
-      name: "realm",
-      type: "text",
-      label: "Realm",
-      getter: () => child_block.realm,
-    },
-    {
       name: "party_leader",
       type: "text",
       label: "Chief",
@@ -328,24 +348,58 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   }
 
   // main interface
-  const ui = bwi.publisher.createInterface(
+  const ui = bwi.publisher.createInterface([
+    { name: "server", type: "botUI" },
+    { name: "character", type: "botUI" },
+    { name: "target", type: "botUI" },
+    // TODO: minimap? before or after loot? before target?
+    { name: "loot", type: "botUI" },
+  ]);
+
+  // TODO: show realm / server / ping, ping chart, avg ping
+  // character.ping
+  // average(parent.pings) - 1)
+  // realm, events, servertime? night/day?
+  // child_block.realm,
+
+  let serverBotUI = ui.createSubBotUI(
     [
-      // TODO: server section
-      // realm, events, servertime? night/day?
-      { name: "character", type: "botUI" },
-      { name: "target", type: "botUI" },
-      // TODO: minimap? before or after loot? before target?
-      { name: "loot", type: "botUI" },
+      { name: "header", type: "leftMiddleRightText" },
+      {
+        name: "pings",
+        type: "chart",
+        label: "Chart",
+        options: {
+          type: "bar",
+        },
+      },
     ],
-    // schema.map((x) => ({
-    //   name: x.name,
-    //   type: x.type,
-    //   label: x.label,
-    //   options: x.options,
-    // })),
+    "server",
   );
 
-  // TODO: show realm / server
+  serverBotUI.setDataSource(() => {
+    if (!last_beat) {
+      return {
+        header: { left: "", middle: "Loading...", right: "" },
+      };
+    }
+
+    return {
+      header: {
+        left: `${last_beat.server_players} online`,
+        middle: child_block.realm,
+        right: Math.floor(last_beat.ping),
+      },
+      pings: {
+        // pings contains 40 entries from game_context.pings
+        data: last_beat.pings.map((p, index) => ({
+          label: index, // x-axis
+          value: p, // y-axis
+        })),
+      },
+    };
+  });
+
   let characterBotUI = ui.createSubBotUI(
     [
       // [characterName] [status] [level]
@@ -479,7 +533,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           )
         } TTLU`,
       },
-      // TODO: i've gotten NaN/42 on my warrior?
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
       gold: {
         left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
@@ -533,15 +586,16 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       };
     }
 
+    // TODO: show damage type?
     return {
       header: {
-        left: entity.name,
+        left: entity.name, // TODO: color name by class, difficulty
         middle: entity.rip ? "💀" : entity.target ?? "",
         right: entity.level,
       },
       header2: {
         left: entity.mtype ?? "",
-        middle: entity.cooperative ? "🤝 co-op 🤝" : "", // TODO: render if mob is coop?
+        middle: entity.cooperative ? "🤝 co-op 🤝" : "",
         right:
           entity.distance === 9999999 //Infinity
             ? "♾️"
