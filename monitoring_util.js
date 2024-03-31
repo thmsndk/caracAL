@@ -140,6 +140,8 @@ function register_stat_beat(game_context) {
 
           // const levelString = getLevelString(gItem, itemInfo.level);
 
+          if (!itemInfo.q) itemInfo.q = 1;
+
           data = { time: new Date(), ...itemInfo };
           itemsByKey[key] = data;
         } else {
@@ -594,7 +596,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         //   htmlTitle = `+${levelString} ${htmlTitle}`;
         // }
 
-        return [timeAgo(x.time), x.gName, x.q ?? 1];
+        return [timeAgo(x.time), x.gName, x.q];
       }),
     };
   });
