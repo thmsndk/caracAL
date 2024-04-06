@@ -195,8 +195,10 @@ function register_stat_beat(game_context) {
       "c", // Channeling actions
       "q", // Progressed actions
       "party",
-      "x",
-      "y",
+      "x", // often 0 ? seems to be view specific?
+      "real_x", // world coordinates
+      "y", // often 0 ? seems to be view specific?
+      "real_y", // world coordinates
       "map",
     ];
 
@@ -361,6 +363,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // average(parent.pings) - 1)
   // realm, events, servertime? night/day?
   // child_block.realm,
+  // time online? amount of disonnects?
 
   let serverBotUI = ui.createSubBotUI(
     [
@@ -373,6 +376,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           type: "bar",
         },
       },
+      // TODO: events and health bars? crabx for example
     ],
     "server",
   );
@@ -400,11 +404,17 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     };
   });
 
+  // TODO: how can we forward timers from the bot, to caracAL?
+  // TODO: death counter? avg death? time alive?
   let characterBotUI = ui.createSubBotUI(
     [
       // [characterName] [status] [level]
       {
         name: "header",
+        type: "leftMiddleRightText",
+      },
+      {
+        name: "header2",
         type: "leftMiddleRightText",
       },
       // TODO: last N status messages?
@@ -440,6 +450,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         label: "Inventory",
         options: { color: "brown" },
       },
+      // TODO: bank space
       {
         name: "gold",
         type: "leftMiddleRightText",
@@ -519,6 +530,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           leftColor: CLASS_COLOR[last_beat.ctype], // looks better with character name class colored than the entire bg
         },
       },
+      header2: {
+        left: last_beat.map,
+        middle: "",
+        right: `${last_beat.real_x.toFixed()}, ${last_beat.real_y.toFixed()}`,
+      },
       health: quick_bar_val(last_beat.hp, last_beat.max_hp, true),
       mana: quick_bar_val(last_beat.mp, last_beat.max_mp, true),
       xp: quick_bar_val(last_beat.xp, last_beat.max_xp, true),
@@ -547,6 +563,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     [
       { name: "header", type: "leftMiddleRightText" },
       { name: "header2", type: "leftMiddleRightText" },
+      { name: "header3", type: "leftMiddleRightText" },
       {
         name: "health",
         type: "labelProgressBar",
@@ -600,6 +617,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           entity.distance === 9999999 //Infinity
             ? "♾️"
             : `${entity.distance.toFixed()} 📏`,
+      },
+      header3: {
+        left: entity.map,
+        middle: "",
+        right: `${entity.real_x.toFixed()}, ${entity.real_y.toFixed()}`,
       },
       health: quick_bar_val(entity.hp, entity.max_hp, true),
       mana: quick_bar_val(entity.mp, entity.max_mp, true),
