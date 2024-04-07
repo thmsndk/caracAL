@@ -161,6 +161,38 @@ function register_stat_beat(game_context) {
     }
   });
 
+  let bank = {};
+  let bank_free_count = 0;
+  let bank_used_count = 0;
+  let bank_total_count = 0;
+  function updateBankCount() {
+    let free = 0;
+    let used = 0;
+    let total = 0;
+    for (const packKey in game_context.bank_packs) {
+      const cPack = bank[packKey];
+
+      if (!cPack) continue;
+
+      const cPackSpaces = cPack.length > 0 ? cPack.length : 42; // a freshly bought bank tab seems to be initialized as an empty array
+      for (let index = 0; index < cPackSpaces; index++) {
+        const item = cPack[index];
+
+        total++;
+
+        if (!item) {
+          free++;
+          continue;
+        }
+
+        used++;
+      }
+    }
+    bank_free_count = free;
+    bank_used_count = used;
+    bank_total_count = total;
+  }
+
   game_context.caracAL.stat_beat = setInterval(() => {
     const result = { type: "stat_beat" };
 
@@ -218,6 +250,15 @@ function register_stat_beat(game_context) {
       const propValue = scqMapGData(x, character[x]);
       result[x] = propValue;
     });
+
+    if (character.bank) {
+      bank = character.bank;
+      updateBankCount();
+    }
+
+    result.bank_free_count = bank_free_count;
+    result.bank_used_count = bank_used_count;
+    result.bank_total_count = bank_total_count;
 
     const { pings, server_region, server_identifier, X } = game_context;
 
@@ -404,6 +445,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     };
   });
 
+  // TODO: movement speed? frequence?
+  // TODO: amount of monsters targeting character by type? fear?
   // TODO: how can we forward timers from the bot, to caracAL?
   // TODO: death counter? avg death? time alive?
   let characterBotUI = ui.createSubBotUI(
@@ -450,7 +493,12 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         label: "Inventory",
         options: { color: "brown" },
       },
-      // TODO: bank space
+      {
+        name: "bank",
+        type: "labelProgressBar",
+        label: "bank",
+        options: { color: "brown" },
+      },
       {
         name: "gold",
         type: "leftMiddleRightText",
@@ -550,6 +598,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         } TTLU`,
       },
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
+      // TODO: write free bank count, hide if we have no bank cache
+      bank: quick_bar_val(
+        last_beat.bank_used_count,
+        last_beat.bank_total_count,
+      ),
       gold: {
         left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
         middle: "",
