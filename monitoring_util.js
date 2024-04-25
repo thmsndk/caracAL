@@ -704,6 +704,31 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       return {};
     }
 
+    const groupedLoot = last_beat.loot.reduce((acc, x) => {
+      const titleName = x.gTitle || "";
+      const itemName = x.gName;
+
+      // const levelString = getLevelString(gItem, itemInfo.level);
+
+      let htmlTitle = itemName;
+      if (titleName) {
+        htmlTitle = `${titleName} ${htmlTitle}`;
+      }
+
+      const time = timeAgo(time);
+      const existingItem = acc.find(
+        (item) => item[0] === time && item[1] === htmlTitle,
+      );
+
+      if (existingItem) {
+        existingItem[2] += x.q;
+      } else {
+        acc.push([time, htmlTitle, x.q]);
+      }
+
+      return acc;
+    }, []);
+
     return {
       // [unopened chest(🪅) count][????][total item/quantity count]
       // 💰📦
@@ -716,23 +741,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
             ? `${last_beat.loot.reduce((a, val) => a + val.q, 0)}`
             : "",
       },
-      loot: last_beat.loot.map((x) => {
-        const titleName = x.gTitle;
-        const itemName = x.gName;
-
-        // const levelString = getLevelString(gItem, itemInfo.level);
-
-        let htmlTitle = itemName;
-        if (titleName) {
-          htmlTitle = `${titleName} ${htmlTitle}`;
-        }
-
-        // if (levelString) {
-        //   htmlTitle = `+${levelString} ${htmlTitle}`;
-        // }
-
-        return [timeAgo(x.time), x.gName, x.q];
-      }),
+      loot: groupedLoot.map(([time, name, quantity]) => [time, name, quantity]),
     };
   });
 
