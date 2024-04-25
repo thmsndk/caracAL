@@ -715,7 +715,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         htmlTitle = `${titleName} ${htmlTitle}`;
       }
 
-      const time = timeAgo(time);
+      const time = timeAgo(x.time);
       const existingItem = acc.find(
         (item) => item[0] === time && item[1] === htmlTitle,
       );
