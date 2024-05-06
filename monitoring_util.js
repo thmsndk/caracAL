@@ -270,6 +270,24 @@ function register_stat_beat(game_context) {
     result.server_players = server.players;
     // server_name is the full server name Europas I
 
+    // party_list
+    result.partyEntities = [];
+    for (const name of game_context.party_list) {
+      // game_context.party only contains location data
+      const entity = game_context.entities[name];
+      const entityResult = { name: name };
+      result.partyEntities.push(entityResult);
+
+      if (!entity) continue;
+
+      ["name", "hp", "max_hp", "mp", "max_mp"].forEach((x) => {
+        // create_monitor_ui does not have the game_context, so we look up values here
+        // const propValue = scqMapGData(x, targetEntity[x]);
+        const propValue = entity[x];
+        entityResult[x] = propValue ?? entityResult[x];
+      });
+    }
+
     const targetEntity = game_context.entities[character.target];
     if (targetEntity) {
       result.target = {};
@@ -393,6 +411,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // main interface
   const ui = bwi.publisher.createInterface([
     { name: "server", type: "botUI" },
+    { name: "party", type: "botUI" }, // TODO should it live inside character?
     { name: "character", type: "botUI" },
     { name: "target", type: "botUI" },
     // TODO: minimap? before or after loot? before target?
@@ -437,10 +456,79 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       pings: {
         // pings contains 40 entries from game_context.pings
-        data: last_beat.pings.map((p, index) => ({
-          label: index, // x-axis
-          value: p, // y-axis
-        })),
+        data: {
+          labels: last_beat.pings.map((p, index) => index),
+          datasets: [
+            {
+              // TODO: colored gradient
+              data: last_beat.pings.map((p) => p),
+            },
+          ],
+        },
+      },
+    };
+  });
+
+  let partyBotUI = ui.createSubBotUI(
+    [
+      // leader ??? size
+      { name: "header", type: "leftMiddleRightText" },
+      {
+        // chart for each char with health and mana
+        name: "health_mana",
+        type: "chart",
+        label: "Chart",
+        options: {
+          type: "bar",
+        },
+      },
+    ],
+    "party",
+  );
+
+  partyBotUI.setDataSource(() => {
+    if (!last_beat) {
+      return {
+        header: { left: "", middle: "Loading...", right: "" },
+      };
+    }
+
+    if (last_beat.partyEntities.length == 0) {
+      return {};
+    }
+
+    // TODO: optimize last_beat.partyEntities looping only once
+    console.log(
+      last_beat.name,
+      last_beat.partyEntities,
+      last_beat.partyEntities.map((x) => (100 * (x.hp ?? 0)) / (x.max_hp ?? 1)),
+    );
+    return {
+      header: {
+        left: `${last_beat.party}`,
+        middle: "",
+        right: last_beat.partyEntities.length,
+      },
+      health_mana: {
+        data: {
+          labels: last_beat.partyEntities.map((x) => x.name),
+          datasets: [
+            {
+              // borderColor: 'rgb(255, 99, 132)',
+              backgroundColor: "rgb(255, 99, 132)",
+              data: last_beat.partyEntities.map(
+                (x) => (100 * (x.hp ?? 0)) / (x.max_hp ?? 1),
+              ),
+            },
+            {
+              // borderColor: 'rgb(54, 162, 235)',
+              backgroundColor: "rgb(54, 162, 235)",
+              data: last_beat.partyEntities.map(
+                (x) => (100 * (x.mp ?? 0)) / (x.max_mp ?? 1),
+              ),
+            },
+          ],
+        },
       },
     };
   });
@@ -461,8 +549,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         type: "leftMiddleRightText",
       },
       // TODO: last N status messages?
-      // TODO: Party Leader?
-      // TODO: party stats?
       // TODO: current map?
       // TODO: [goldm][luckm][xpm]
       {
