@@ -498,11 +498,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     }
 
     // TODO: optimize last_beat.partyEntities looping only once
-    console.log(
-      last_beat.name,
-      last_beat.partyEntities,
-      last_beat.partyEntities.map((x) => (100 * (x.hp ?? 0)) / (x.max_hp ?? 1)),
-    );
+    // console.log(
+    //   last_beat.name,
+    //   last_beat.partyEntities,
+    //   last_beat.partyEntities.map((x) => (100 * (x.hp ?? 0)) / (x.max_hp ?? 1)),
+    // );
     return {
       header: {
         left: `${last_beat.party}`,
@@ -536,7 +536,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // TODO: movement speed? frequence?
   // TODO: amount of monsters targeting character by type? fear?
   // TODO: how can we forward timers from the bot, to caracAL?
-  // TODO: death counter? avg death? time alive?
+  // TODO: death counter? avg death? time alive? graph? last death time?
   let characterBotUI = ui.createSubBotUI(
     [
       // [characterName] [status] [level]
