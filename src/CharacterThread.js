@@ -220,11 +220,38 @@ async function make_game(proc_args) {
     old_dc();
     extensions.deploy();
   };
+
+  async function api_call_with_auth_cookie(method, args, r_args) {
+    const session = `${game_context.user_id}-${game_context.user_auth}`;
+
+    const url = `${game_context.location.origin}/api/${method}`;
+    console.log("api_call", method, url, session);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Cookie: "auth=" + session,
+        "Content-Type": "application/x-www-form-urlencoded", // this is the default in $.ajax
+        Accept: "application/json", // Tell the server we expect JSON
+      },
+      body: new URLSearchParams({
+        method: method,
+        arguments: JSON.stringify(args ?? {}),
+      }).toString(),
+    });
+
+    // TODO: do we need to handle push deffered and what not?
+    json = await response.json();
+
+    // client handles it differently depending on the call and what is returned. This causes the api_response event to trigger
+    game_context.handle_information(json);
+  }
+
   const old_api = game_context.api_call;
   game_context.api_call = function (method, args, r_args) {
     //servers and characters are handled centrally
     if (method != "servers_and_characters") {
-      return old_api(method, args, r_args);
+      return api_call_with_auth_cookie(method, args, r_args);
+      // return old_api(method, args, r_args);
     } else {
       console.debug("filtered s&c call", method, args, r_args);
     }
