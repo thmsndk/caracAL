@@ -216,7 +216,6 @@ If you want max performance you should choose no.`,
       ["node", "./standalones/LogPrinter.js"],
     ],
     web_app: {
-      // TODO: title
       title,
       enable_bwi: use_bwi,
       enable_minimap: use_minimap || false,
