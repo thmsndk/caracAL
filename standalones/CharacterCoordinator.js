@@ -223,7 +223,8 @@ function migrate_old_storage(path, localStorage) {
     );
     const args = {
       version: g_version,
-      realm_addr: realm.addr,
+      realm_address: realm.address ?? realm.addr,
+      realm_path: realm.path ?? "",
       realm_port: realm.port,
       sess: sess,
       cid: char.id,

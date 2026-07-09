@@ -72,7 +72,32 @@ async function make_runner(upper, CODE_file, proc_args, is_typescript) {
   //TODO in the future i should consider parsing the relevant parts out of the html files directly
   //for the runners as well as the instances
   vm.runInContext(
-    "var active=false,catch_errors=true,is_code=1,is_server=0,is_game=0,is_bot=parent.is_bot,is_cli=parent.is_cli,is_sdk=parent.is_sdk;",
+    `
+    var active=false,catch_errors=true,is_code=1,is_server=0,is_game=0,is_bot=parent.is_bot,is_cli=parent.is_cli,is_sdk=parent.is_sdk;
+    var Place='game';
+    var transporting=false;var Dev='';
+    var Local='';
+    `,
+    runner_context,
+  );
+
+  vm.runInContext(
+    `
+  (function() {
+    const originalDefine = Object.defineProperty;
+
+    Object.defineProperty = function(obj, prop, descriptor) {
+      if (
+        obj === String.prototype &&
+        prop === "hashCode" &&
+        Object.prototype.hasOwnProperty.call(String.prototype, "hashCode")
+      ) {
+        return obj;
+      }
+      return originalDefine(obj, prop, descriptor);
+    };
+  })();
+`,
     runner_context,
   );
   await ev_files(runner_sources, runner_context);
@@ -164,8 +189,17 @@ async function make_game(proc_args) {
   game_context.bowser = {};
   await ev_files(game_sources, game_context);
   game_context.VERSION = "" + game_context.G.version;
-  game_context.server_addr = proc_args.realm_addr;
-  game_context.server_port = proc_args.realm_port;
+  game_context.Local = "";
+  game_context.Dev = "";
+  game_context.Place = "code";
+  const realmHost = proc_args.realm_address ?? proc_args.realm_addr;
+  game_context.server_address = realmHost.startsWith("wss://")
+    ? realmHost
+    : "wss://" + realmHost;
+  game_context.server_path = proc_args.realm_path ?? "";
+  if (proc_args.realm_port) {
+    game_context.server_port = proc_args.realm_port;
+  }
   game_context.user_id = proc_args.sess.split("-")[0];
   game_context.user_auth = proc_args.sess.split("-")[1];
   game_context.character_to_load = proc_args.cid;

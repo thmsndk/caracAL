@@ -68,6 +68,11 @@ async function prompt_server() {
   if (use_official_server) {
     return "https://adventure.land";
   } else {
+    if (server_url.startsWith("http://")) {
+      console.warn(
+        "Warning: HTTP custom servers may have socket connection issues. HTTPS is recommended.",
+      );
+    }
     return server_url;
   }
 }
