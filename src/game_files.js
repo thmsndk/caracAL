@@ -26,6 +26,7 @@ function getHostname(base_url) {
 
 function get_runner_files() {
   return [
+    "/js/old_common_functions.js",
     "/js/common_functions.js",
     "/js/runner_functions.js",
     "/js/runner_compat.js",
@@ -36,7 +37,7 @@ function get_game_files() {
     "/js/pixi/fake/pixi.min.js",
     "/js/libraries/combined.js",
     "/js/codemirror/fake/codemirror.js",
-
+    "/js/old_common_functions.js",
     "/js/common_functions.js",
     "/js/functions.js",
     "/js/game.js",

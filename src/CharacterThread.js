@@ -268,19 +268,14 @@ async function make_game(proc_args) {
       method: "POST",
       headers: {
         Cookie: "auth=" + session,
-        "Content-Type": "application/x-www-form-urlencoded", // this is the default in $.ajax
-        Accept: "application/json", // Tell the server we expect JSON
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
-      body: new URLSearchParams({
-        method: method,
-        arguments: JSON.stringify(args ?? {}),
-      }).toString(),
+      body: JSON.stringify(args ?? {}),
     });
 
-    // TODO: do we need to handle push deffered and what not?
-    json = await response.json();
+    const json = await response.json();
 
-    // client handles it differently depending on the call and what is returned. This causes the api_response event to trigger
     game_context.handle_information(json);
   }
 
