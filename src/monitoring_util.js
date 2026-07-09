@@ -47,7 +47,6 @@ function register_stat_beat(game_context) {
           const prop = props[conditionKey];
 
           if (typeof prop === "boolean") {
-            // TODO: should we map to the same data structure? it's not on a timer if it has no ms
             result[conditionKey] = prop;
           } else {
             const gCondition = gConditions[conditionKey];
@@ -64,9 +63,6 @@ function register_stat_beat(game_context) {
                   gCondition?.duration ?? 12000; /* citizen aura default ms */
                 break;
             }
-
-            // TODO: citizen0aura is a dynamic aura that does not exist in condition, but the  key is [npcKey]aura so we can look up the npc name in G.npc
-            // perhaps we want to look more into data of the aura to see what it changes?
 
             result[conditionKey] = newProp;
           }
@@ -90,9 +86,7 @@ function register_stat_beat(game_context) {
           const gCondition = gConditions[key];
           const newProp = { ...prop };
           newProp.name = gCondition?.name ?? prop.name ?? key;
-          // TODO: What would be a sane duration fallback if we have no duration?
-          newProp.ims =
-            gCondition?.duration ?? 12000; /* citizen aura default ms */
+          newProp.ims = gCondition?.duration ?? 12000;
           result[key] = newProp;
         }
 
@@ -114,8 +108,7 @@ function register_stat_beat(game_context) {
           const gItem = gItems[key];
           const newProp = { ...prop };
           newProp.name = gItem?.name ?? prop.name ?? key;
-          // TODO: What would be a sane duration fallback if we have no duration?
-          newProp.ims = prop.len ?? 12000; /* citizen aura default ms */
+          newProp.ims = prop.len ?? 12000;
           result[key] = newProp;
         }
 
@@ -151,7 +144,6 @@ function register_stat_beat(game_context) {
           // group the same items in the same chest to a single entry
           // for example when easter eggs drops
           data.q += itemInfo.q;
-          // TODO: group items in a timeframe?
         }
       }
     }
@@ -234,7 +226,6 @@ function register_stat_beat(game_context) {
       "map",
     ];
 
-    // console.log(character);
     [
       ...entityProps,
       "ping",
@@ -297,8 +288,6 @@ function register_stat_beat(game_context) {
         result.target[x] = propValue;
       });
 
-      // TODO: targets target? so we can render the correct monster type if our target is a party member for example
-
       result.target.distance = game_context.simple_distance(
         character,
         targetEntity,
@@ -308,13 +297,10 @@ function register_stat_beat(game_context) {
       delete result.target;
     }
 
-    // console.log("chests", game_context.chests);
-    // skin is the type of chest, it's sometimes 0undefined ??
     const chestsWithItems = Object.values(game_context.chests).filter(
       (chest) => chest.items > 0,
     );
     result.chests = chestsWithItems.length;
-    // console.log("chests", result.chestsWithItems);
 
     result.current_status = game_context.current_status;
     if (game_context.caracAL.map_enabled()) {
@@ -322,7 +308,6 @@ function register_stat_beat(game_context) {
         "data:image/png;base64," +
         generate_minimap(game_context).toString("base64");
     }
-    // console.warn("stat beat send");
     process.send(result);
   }, STAT_BEAT_INTERVAL);
 }
@@ -336,18 +321,18 @@ function register_stat_beat(game_context) {
  * @returns
  */
 function create_monitor_ui(bwi, char_name, child_block, enable_map) {
+  // Future BWI enhancements: loot pie chart and loot/h, DPS/HPS, death stats,
+  // timer bar colors by debuff type, revive priest name in timer rightText,
+  // target's-target for party assists, ping gradient chart, goldm/luckm/xpm display,
+  // movement speed and aggro counts, bot-forwarded custom timers, server events.
+
   let xp_histo = [];
   let xp_ph = 0;
   let gold_histo = [];
   let last_beat = null;
 
-  // .instance is the process, I don't think we have access to the game context here
-  // console.log(child_block.instance.)
-
-  // register_stat_beat will trigger a specific message
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
-      // console.warn("stat_beat", m);
       gold_histo.push(m.gold);
       gold_histo = gold_histo.slice(-100);
 
@@ -411,19 +396,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   // main interface
   const ui = bwi.publisher.createInterface([
     { name: "server", type: "botUI" },
-    { name: "party", type: "botUI" }, // TODO should it live inside character?
+    { name: "party", type: "botUI" },
     { name: "character", type: "botUI" },
     { name: "target", type: "botUI" },
-    // TODO: minimap? before or after loot? before target?
     { name: "loot", type: "botUI" },
   ]);
-
-  // TODO: show realm / server / ping, ping chart, avg ping
-  // character.ping
-  // average(parent.pings) - 1)
-  // realm, events, servertime? night/day?
-  // child_block.realm,
-  // time online? amount of disonnects?
 
   let serverBotUI = ui.createSubBotUI(
     [
@@ -436,7 +413,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           type: "bar",
         },
       },
-      // TODO: events and health bars? crabx for example
     ],
     "server",
   );
@@ -460,7 +436,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           labels: last_beat.pings.map((p, index) => index),
           datasets: [
             {
-              // TODO: colored gradient
               data: last_beat.pings.map((p) => p),
             },
           ],
@@ -497,12 +472,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       return {};
     }
 
-    // TODO: optimize last_beat.partyEntities looping only once
-    // console.log(
-    //   last_beat.name,
-    //   last_beat.partyEntities,
-    //   last_beat.partyEntities.map((x) => (100 * (x.hp ?? 0)) / (x.max_hp ?? 1)),
-    // );
     return {
       header: {
         left: `${last_beat.party}`,
@@ -533,10 +502,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     };
   });
 
-  // TODO: movement speed? frequence?
-  // TODO: amount of monsters targeting character by type? fear?
-  // TODO: how can we forward timers from the bot, to caracAL?
-  // TODO: death counter? avg death? time alive? graph? last death time?
   let characterBotUI = ui.createSubBotUI(
     [
       // [characterName] [status] [level]
@@ -548,9 +513,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         name: "header2",
         type: "leftMiddleRightText",
       },
-      // TODO: last N status messages?
-      // TODO: current map?
-      // TODO: [goldm][luckm][xpm]
       {
         name: "health",
         type: "labelProgressBar",
@@ -568,9 +530,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         type: "labelProgressBar",
         label: "XP",
         options: { color: "green" },
-        // TODO: render TTLU on right side, need a new component for that
-        // [XP/h][XP][TTLU]
-        // TODO: perhaps xpText is okay, with a chart?
       },
       { name: "xpText", type: "leftMiddleRightText" },
       {
@@ -598,7 +557,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   function scqTimers(s, c, q) {
-    // TODO: ignore certain timers via config?
     const timers = [];
     // s is conditions or buffs
     // Q: how do we access G? is it even possible? would like to look up the name and duration
@@ -609,38 +567,26 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         leftText: condition.name,
         middleText: msToTime(condition.ms),
         percentage: (Math.max(0, condition.ms) / condition.ims) * 100,
-        // TODO: colors? debuff, type? and such?
-        // TODO: citizen aura seems to reset to 5000
-        // TODO: citizen0aura is a dynamic aura, we have added the npc name to display in rightText
       });
     }
 
-    // c is channeled actions, like fishing
     for (const channeldKey in c) {
       const channel = c[channeldKey];
       timers.push({
         leftText: channel.name,
         middleText: msToTime(channel.ms),
         percentage: (Math.max(0, channel.ms) / channel.ims) * 100,
-        // TODO: colors? debuff, type? and such?
       });
-      // TODO: revive has the playername in .f, display it in right text?,
-      // color the font / bar depending on what prop the aura gives?
-      // luck = green?
     }
 
-    // q is progressed actions, upgrade, compound, exchange
     for (const actionKey in q) {
       const action = q[actionKey];
       timers.push({
         leftText: action.name,
         middleText: msToTime(action.ms),
         percentage: (Math.max(0, action.ms) / action.ims) * 100,
-        // TODO: colors? debuff, type? and such?
       });
     }
-
-    // console.warn("timers", timers);
 
     return timers;
   }
@@ -684,7 +630,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         } TTLU`,
       },
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
-      // TODO: write free bank count, hide if we have no bank cache
       bank: quick_bar_val(
         last_beat.bank_used_count,
         last_beat.bank_total_count,
@@ -737,15 +682,14 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       return {
         header: { left: "", middle: "No Target", right: "" },
         header2: { left: "", middle: " ", right: "" },
-        health: [100, " "], // TODO: can we hide the label?
+        health: [100, " "],
         mana: [100, " "],
       };
     }
 
-    // TODO: show damage type?
     return {
       header: {
-        left: entity.name, // TODO: color name by class, difficulty
+        left: entity.name,
         middle: entity.rip ? "💀" : entity.target ?? "",
         right: entity.level,
       },
@@ -768,12 +712,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     };
   });
 
-  // TODO: only show if show_loot is on
   let lootBotUI = ui.createSubBotUI(
     [
-      // TODO: Pie chart of loot?
-      // TODO: loot/h
-      // TODO: chests/h?
       { name: "lootHeader", type: "leftMiddleRightText" },
       {
         name: "loot",
