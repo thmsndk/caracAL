@@ -4,6 +4,10 @@ A Node.js client for [adventure.land](https://adventure.land/ "Adventure Land")
 
 ## Recent Versions
 
+#### 2026-01-23
+
+Fixed ENOENT error for nonexistent TYPECODE.out file
+
 ### Typescript
 
 #### 2024-03-10

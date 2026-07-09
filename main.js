@@ -5,10 +5,12 @@ const fs = require("fs");
 const { resolve } = require("path");
 
 async function get_webpack_started(cfg) {
-  if (fs.existsSync("./TYPECODE.out")) {
+  try {
     fs.rmSync("./TYPECODE.out", { recursive: true });
+  } catch (error) {
+    //Sometimes throws if file doesnt exist
+    //We want it to not exist, so we ignore it
   }
-
   if (cfg.enable_TYPECODE) {
     //TODO make this configurable
     const webpack_log_output = [

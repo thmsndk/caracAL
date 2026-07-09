@@ -6,8 +6,8 @@ const node_query = require("jquery");
 const game_files = require("./game_files");
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
-const monitoring_util = require("../monitoring_util");
-const ipc_storage = require("../ipcStorage");
+const monitoring_util = require("./monitoring_util");
+const ipc_storage = require("./ipcStorage");
 
 const LogUtils = require("./LogUtils");
 const { console } = LogUtils;
@@ -72,7 +72,32 @@ async function make_runner(upper, CODE_file, proc_args, is_typescript) {
   //TODO in the future i should consider parsing the relevant parts out of the html files directly
   //for the runners as well as the instances
   vm.runInContext(
-    "var active=false,catch_errors=true,is_code=1,is_server=0,is_game=0,is_bot=parent.is_bot,is_cli=parent.is_cli,is_sdk=parent.is_sdk;",
+    `
+    var active=false,catch_errors=true,is_code=1,is_server=0,is_game=0,is_bot=parent.is_bot,is_cli=parent.is_cli,is_sdk=parent.is_sdk;
+    var Place='game';
+    var transporting=false;var Dev='';
+    var Local='';
+    `,
+    runner_context,
+  );
+
+  vm.runInContext(
+    `
+  (function() {
+    const originalDefine = Object.defineProperty;
+
+    Object.defineProperty = function(obj, prop, descriptor) {
+      if (
+        obj === String.prototype &&
+        prop === "hashCode" &&
+        Object.prototype.hasOwnProperty.call(String.prototype, "hashCode")
+      ) {
+        return obj;
+      }
+      return originalDefine(obj, prop, descriptor);
+    };
+  })();
+`,
     runner_context,
   );
   await ev_files(runner_sources, runner_context);
@@ -156,7 +181,7 @@ async function make_game(proc_args) {
     .map((f) =>
       game_files.locate_game_file(proc_args.base_url, f, proc_args.version),
     )
-    .concat(["./html_vars.js"]);
+    .concat(["./src/html_vars.js"]);
   console.log("constructing game instance");
   console.debug("source files:\n%s", game_sources);
   const game_context = make_context(null, proc_args.base_url);
@@ -164,8 +189,17 @@ async function make_game(proc_args) {
   game_context.bowser = {};
   await ev_files(game_sources, game_context);
   game_context.VERSION = "" + game_context.G.version;
-  game_context.server_addr = proc_args.realm_addr;
-  game_context.server_port = proc_args.realm_port;
+  game_context.Local = "";
+  game_context.Dev = "";
+  game_context.Place = "code";
+  const realmHost = proc_args.realm_address ?? proc_args.realm_addr;
+  game_context.server_address = realmHost.startsWith("wss://")
+    ? realmHost
+    : "wss://" + realmHost;
+  game_context.server_path = proc_args.realm_path ?? "";
+  if (proc_args.realm_port) {
+    game_context.server_port = proc_args.realm_port;
+  }
   game_context.user_id = proc_args.sess.split("-")[0];
   game_context.user_auth = proc_args.sess.split("-")[1];
   game_context.character_to_load = proc_args.cid;
@@ -200,6 +234,10 @@ async function make_game(proc_args) {
   game_context.new_game_logic = function () {
     old_ng_logic();
     clearTimeout(reload_task);
+    //people reported bad performance when switching maps
+    //and this allegedly fixes it.
+    vm.runInContext("pause()", game_context);
+
     const is_typescript =
       proc_args.typescript_file && proc_args.typescript_file.length > 0;
     const target_script = is_typescript
