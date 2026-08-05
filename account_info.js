@@ -12,6 +12,8 @@ class Info {
         Cookie: "auth=" + this.session,
         "Content-Type": "application/json",
       },
+      // Hung API must not leave overlapping updateInfo forever.
+      signal: AbortSignal.timeout(15_000),
     });
     if (!raw.ok) {
       throw new Error(`failed to update account info: ${raw.statusText}`);

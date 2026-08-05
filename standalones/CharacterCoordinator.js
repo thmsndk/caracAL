@@ -11,6 +11,8 @@ const {
   LOCALSTORAGE_PATH,
   LOCALSTORAGE_ROTA_PATH,
   STAT_BEAT_INTERVAL,
+  STALE_STAT_BEAT_MS,
+  CHAR_WATCHDOG_INTERVAL_MS,
 } = require("../src/CONSTANTS");
 const { log, console, ctype_to_clid } = require("../src/LogUtils");
 
@@ -150,12 +152,26 @@ function migrate_old_storage(path, localStorage) {
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  /** Forward child stdio without `.pipe()` backpressure (freezes game clients). */
+  function pump_child_stdio(src, dest) {
+    src.on("data", (chunk) => {
+      try {
+        if (dest.writable) {
+          dest.write(chunk);
+        }
+      } catch (_) {}
+    });
+    src.on("error", () => {});
+  }
+
   //attempts to softkill child processes
   //by sending an ipc if the client is connected and giving some timeout
   //why not actual SIGTERM? cause windows cant even
   async function softkill_block(char_block) {
     const proc = char_block.instance;
     char_block.instance = null;
+    char_block.last_stat_beat = Date.now();
     if (proc) {
       if (char_block.connected) {
         console.log("telling client to self-terminate");
@@ -255,9 +271,10 @@ function migrate_old_storage(path, localStorage) {
       execArgv: permissionArgv,
     });
 
-    result.stdout.pipe(process.stdout);
-    result.stderr.pipe(process.stderr);
+    pump_child_stdio(result.stdout, process.stdout);
+    pump_child_stdio(result.stderr, process.stderr);
     char_block.instance = result;
+    char_block.last_stat_beat = Date.now();
     result.on("exit", () => {
       if (char_block.monitor) {
         //close monitor
@@ -279,9 +296,14 @@ function migrate_old_storage(path, localStorage) {
           });
           break;
         case "initialized":
+          char_block.last_stat_beat = Date.now();
+          break;
+        case "stat_beat":
+          char_block.last_stat_beat = Date.now();
           break;
         case "connected":
           char_block.connected = true;
+          char_block.last_stat_beat = Date.now();
           update_siblings_and_acc(my_acc.response);
           break;
         case "deploy":
@@ -430,6 +452,27 @@ function migrate_old_storage(path, localStorage) {
     }
   });
   my_acc.add_listener(update_siblings_and_acc);
+
+  // Redeploy zombie clients that stop heartbeating (hung CODE / blocked stdio /
+  // silent socket death without an exit). Exit handler restarts when enabled.
+  setInterval(() => {
+    const now = Date.now();
+    for (const [name, block] of Object.entries(character_manage)) {
+      if (!block.enabled || !block.instance || !block.connected) {
+        continue;
+      }
+      const last = block.last_stat_beat || 0;
+      const age = now - last;
+      if (age < STALE_STAT_BEAT_MS) {
+        continue;
+      }
+      console.warn(
+        `watchdog: ${name} silent for ${Math.round(age / 1000)}s — redeploying`,
+      );
+      block.last_stat_beat = now;
+      softkill_block(block);
+    }
+  }, CHAR_WATCHDOG_INTERVAL_MS);
 })().catch((e) => {
   console.error("failed to start caracAL", e);
 });

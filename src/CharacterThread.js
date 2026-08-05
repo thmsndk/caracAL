@@ -267,7 +267,13 @@ async function make_game(proc_args) {
   };
   const old_dc = game_context.disconnect;
   game_context.disconnect = function () {
-    old_dc();
+    try {
+      old_dc();
+    } catch (e) {
+      console.error("disconnect() error", e);
+    }
+    // AL auto_reload uses location.href / CLI kill — neither restarts caracAL.
+    // Always ask the coordinator to softkill+respawn this client.
     extensions.deploy();
   };
 
@@ -362,6 +368,32 @@ async function make_game(proc_args) {
   game_context.socket.on("connect_error", (err) => {
     console.error(`connect_error due to ${err.message}`, err);
   });
+
+  // Silent socket death: game may never call disconnect(); redeploy ourselves.
+  let saw_socket_connected = false;
+  let socket_down_since = null;
+  setInterval(() => {
+    const sock = game_context.socket;
+    if (sock && sock.connected) {
+      saw_socket_connected = true;
+      socket_down_since = null;
+      return;
+    }
+    if (!saw_socket_connected) {
+      return;
+    }
+    if (socket_down_since == null) {
+      socket_down_since = Date.now();
+      return;
+    }
+    if (Date.now() - socket_down_since < 15_000) {
+      return;
+    }
+    console.warn("socket down >15s after prior connect — redeploying");
+    socket_down_since = Date.now() + 45_000;
+    extensions.deploy();
+  }, 2_000);
+
   return game_context;
 }
 //have to use on, localstorage may send messages
