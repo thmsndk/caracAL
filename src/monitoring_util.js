@@ -253,12 +253,17 @@ function register_stat_beat(game_context) {
 
     const { pings, server_region, server_identifier, X } = game_context;
 
-    const server = X.servers.find(
-      (x) => x.key === server_region + server_identifier,
-    );
+    // Official keys are region+identifier (USI). Custom/local servers often use
+    // prefixed keys (SR_USI) while still exposing region/name as US/I.
+    const servers = (X && X.servers) || [];
+    const server =
+      servers.find((x) => x.key === server_region + server_identifier) ||
+      servers.find(
+        (x) => x.region === server_region && x.name === server_identifier,
+      );
 
     result.pings = pings;
-    result.server_players = server.players;
+    result.server_players = server ? server.players : undefined;
     // server_name is the full server name Europas I
 
     // party_list
