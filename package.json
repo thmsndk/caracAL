@@ -9,7 +9,7 @@
   "author": "number_e",
   "license": "MIT",
   "dependencies": {
-    "bot-web-interface": "file:bot-web-interface-2.1.0.tgz",
+    "bot-web-interface": "file:bot-web-interface-2.2.0.tgz",
     "cloneable-readable": "^3.0.0",
     "inquirer": "^8.2.6",
     "jquery": "^3.7.1",
@@ -18,7 +18,7 @@
     "node-fetch": "^3.3.2",
     "pino": "^8.16.1",
     "pino-pretty": "^10.2.3",
-    "pngjs": "^6.0.0",
+    "pngjs": "^7.0.0",
     "pretty-ms": "^7.0.1",
     "socket.io-client": "^4.7.2",
     "ts-loader": "^9.5.0",
