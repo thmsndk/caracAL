@@ -1,6 +1,6 @@
 //so much pain just because windows doesnt have bash ;-;
 const { fork, spawn } = require("node:child_process");
-const { PassThrough, pipeline } = require("node:stream");
+const { PassThrough } = require("node:stream");
 const cloneable = require("cloneable-readable");
 
 function spawn_sink(command, ...args) {
@@ -38,6 +38,32 @@ function on_stream_settled(stream, callback) {
   stream.on("close", mark);
 }
 
+/**
+ * Forward bytes without respecting backpressure.
+ * `.pipe()` / `pipeline()` pause the producer when a sink stalls; that freezes
+ * CharacterCoordinator (and its character threads) and looks like a permanent
+ * disconnect with no reconnect.
+ */
+function pump_no_backpressure(src, dest) {
+  if (!dest) {
+    return;
+  }
+  src.on("data", (chunk) => {
+    try {
+      if (dest.writable) {
+        dest.write(chunk);
+      }
+    } catch (_) {
+      // sink died mid-write — drop rather than freeze the producer
+    }
+  });
+  src.on("error", (err) => {
+    if (!is_benign_stream_error(err)) {
+      throw err;
+    }
+  });
+}
+
 function redirect_into_process(stdout, stderr, target_proc) {
   function err_handler(err) {
     if (is_benign_stream_error(err)) {
@@ -49,7 +75,7 @@ function redirect_into_process(stdout, stderr, target_proc) {
     // Merge stdout+stderr into one stdin. Two pipeline()s into the same
     // destination would end stdin when the first source finishes and
     // ERR_STREAM_PREMATURE_CLOSE the other.
-    const merged = new PassThrough();
+    const merged = new PassThrough({ highWaterMark: 1024 * 1024 });
     let pending = 2;
     const on_source_done = () => {
       pending -= 1;
@@ -57,19 +83,16 @@ function redirect_into_process(stdout, stderr, target_proc) {
         merged.end();
       }
     };
-    stdout.pipe(merged, { end: false });
-    stderr.pipe(merged, { end: false });
-    stdout.on("error", err_handler);
-    stderr.on("error", err_handler);
+    pump_no_backpressure(stdout, merged);
+    pump_no_backpressure(stderr, merged);
     on_stream_settled(stdout, on_source_done);
     on_stream_settled(stderr, on_source_done);
-    pipeline(merged, target_proc.stdin, err_handler);
+    pump_no_backpressure(merged, target_proc.stdin);
+    merged.on("error", err_handler);
   } else {
     // Never end the process stdio streams.
-    stdout.pipe(process.stdout, { end: false });
-    stderr.pipe(process.stderr, { end: false });
-    stdout.on("error", err_handler);
-    stderr.on("error", err_handler);
+    pump_no_backpressure(stdout, process.stdout);
+    pump_no_backpressure(stderr, process.stderr);
   }
 }
 
