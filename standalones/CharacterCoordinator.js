@@ -439,6 +439,12 @@ function migrate_old_storage(path, localStorage) {
           return softkill_block(char_block);
         }),
       );
+      console.log("flushing localStorage to disk");
+      try {
+        localStorage.shutdown();
+      } catch (err) {
+        console.error("localStorage shutdown error:", err);
+      }
       console.log("now truly exiting");
       process.exit();
     }),
