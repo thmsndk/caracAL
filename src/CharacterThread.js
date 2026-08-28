@@ -176,10 +176,13 @@ async function make_runner(upper, CODE_file, proc_args, is_typescript) {
 }
 
 async function make_game(proc_args) {
-  const game_sources = game_files
-    .get_game_files()
-    .map((f) =>
-      game_files.locate_game_file(proc_args.base_url, f, proc_args.version),
+  const game_sources = ["./src/html_prelude.js"]
+    .concat(
+      game_files
+        .get_game_files()
+        .map((f) =>
+          game_files.locate_game_file(proc_args.base_url, f, proc_args.version),
+        ),
     )
     .concat(["./src/html_vars.js"]);
   console.log("constructing game instance");
