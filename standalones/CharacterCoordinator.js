@@ -81,9 +81,47 @@ function migrate_old_storage(path, localStorage) {
   const cfg = require(CARACAL_CONFIG_PATH);
   const base_url = cfg.base_url || "https://adventure.land";
 
-  const version = await game_files.ensure_latest(base_url);
+  let latest_version = await game_files.ensure_latest(base_url);
+  let ensure_latest_inflight = null;
+
+  function pinned_numeric_versions() {
+    const used = [];
+    for (const block of Object.values(character_manage || {})) {
+      if (game_files.follows_latest_client(block.version)) {
+        continue;
+      }
+      const numeric = Number(block.version);
+      if (Number.isInteger(numeric)) {
+        used.push(numeric);
+      }
+    }
+    return used;
+  }
+
+  async function refresh_latest_game_files() {
+    if (ensure_latest_inflight) {
+      return ensure_latest_inflight;
+    }
+    ensure_latest_inflight = (async () => {
+      const next = await game_files.ensure_latest(base_url);
+      const prev = latest_version;
+      const changed = next !== prev;
+      latest_version = next;
+      if (changed && cfg.cull_versions) {
+        await game_files.cull_versions(base_url, [
+          next,
+          ...pinned_numeric_versions(),
+        ]);
+      }
+      return { changed, prev, next };
+    })().finally(() => {
+      ensure_latest_inflight = null;
+    });
+    return ensure_latest_inflight;
+  }
+
   if (cfg.cull_versions) {
-    await game_files.cull_versions(base_url, [version]);
+    await game_files.cull_versions(base_url, [latest_version]);
   }
   const sess = process.env.AL_SESSION || cfg.session;
 
@@ -210,7 +248,7 @@ function migrate_old_storage(path, localStorage) {
     });
   }
 
-  function start_char(char_name) {
+  async function do_start_char(char_name) {
     const char_block = character_manage[char_name];
     let realm = my_acc.resolve_realm(char_block.realm);
     if (!realm) {
@@ -234,12 +272,21 @@ function migrate_old_storage(path, localStorage) {
       char_block.enabled = false;
       return;
     }
-    const g_version = char_block.version || version;
+    const track_latest = game_files.follows_latest_client(char_block.version);
+    if (track_latest) {
+      try {
+        await refresh_latest_game_files();
+      } catch (e) {
+        console.error("failed to refresh game files, using cached latest", e);
+      }
+    }
+    const g_version = track_latest ? latest_version : char_block.version;
     console.log(
       `starting ${char_name} running version ${g_version} in ${char_block.realm}`,
     );
     const args = {
       version: g_version,
+      track_latest,
       realm_address: realm.address ?? realm.addr,
       realm_path: realm.path ?? "",
       realm_port: realm.path ? undefined : realm.port,
@@ -284,7 +331,9 @@ function migrate_old_storage(path, localStorage) {
       char_block.connected = false;
       char_block.instance = null;
       if (char_block.enabled) {
-        start_char(char_name);
+        start_char(char_name).catch((e) => {
+          console.error(`failed to restart ${char_name}`, e);
+        });
       }
     });
     result.on("message", (m) => {
@@ -327,8 +376,16 @@ function migrate_old_storage(path, localStorage) {
             candidate.connected = false; //TODO i need to refractor lifecycle management
           } else {
             candidate.connected = false;
-            start_char(new_char_name);
+            start_char(new_char_name).catch((e) => {
+              console.error(`failed to start ${new_char_name}`, e);
+            });
           }
+          break;
+        case "game_client_check":
+          // welcome.version / reloaded: event-driven refresh for unpinned chars
+          redeploy_unpinned_for_new_client().catch((e) => {
+            console.error("game_client_check failed", e);
+          });
           break;
         case "shutdown":
           if (m.character) {
@@ -427,6 +484,49 @@ function migrate_old_storage(path, localStorage) {
 
     return result;
   }
+
+  function start_char(char_name) {
+    const char_block = character_manage[char_name];
+    if (char_block.starting) {
+      return char_block.starting;
+    }
+    char_block.starting = do_start_char(char_name).finally(() => {
+      char_block.starting = null;
+    });
+    return char_block.starting;
+  }
+
+  async function redeploy_unpinned_for_new_client() {
+    let result;
+    try {
+      result = await refresh_latest_game_files();
+    } catch (e) {
+      console.error("game client update check failed", e);
+      return;
+    }
+    if (!result.changed) {
+      return;
+    }
+    console.log(
+      `game client ${result.prev} -> ${result.next}; redeploying unpinned characters`,
+    );
+    for (const [name, block] of Object.entries(character_manage)) {
+      if (!block.enabled) {
+        continue;
+      }
+      if (!game_files.follows_latest_client(block.version)) {
+        continue;
+      }
+      if (block.instance) {
+        console.log(`redeploying ${name} onto game client ${result.next}`);
+        await softkill_block(block);
+      } else if (!block.starting) {
+        start_char(name).catch((e) => {
+          console.error(`failed to start ${name} after game client update`, e);
+        });
+      }
+    }
+  }
   //TODO beta new logic for #5
   //i need to implement decent lifecycle-handling
   ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((signal) =>
@@ -450,13 +550,15 @@ function migrate_old_storage(path, localStorage) {
     }),
   );
 
-  const tasks = Object.keys(character_manage).forEach((c_name) => {
+  for (const c_name of Object.keys(character_manage)) {
     const char = character_manage[c_name];
     char.connected = false;
     if (char.enabled) {
-      start_char(c_name);
+      start_char(c_name).catch((e) => {
+        console.error(`failed to start ${c_name}`, e);
+      });
     }
-  });
+  }
   my_acc.add_listener(update_siblings_and_acc);
 
   // Redeploy zombie clients that stop heartbeating (hung CODE / blocked stdio /

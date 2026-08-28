@@ -372,6 +372,43 @@ async function make_game(proc_args) {
     console.error(`connect_error due to ${err.message}`, err);
   });
 
+  // welcome.version is G.version / Version / game.js?v= — same stamp caracAL caches by.
+  // Official client ignores it; we use a mismatch to refetch+redeploy unpinned bots.
+  let reported_client_stale = false;
+  function request_game_client_check(reason) {
+    if (!proc_args.track_latest || reported_client_stale) {
+      return;
+    }
+    reported_client_stale = true;
+    console.warn(`game client check (${reason})`);
+    process.send({ type: "game_client_check", reason });
+  }
+
+  game_context.socket.on("welcome", (data) => {
+    if (!proc_args.track_latest) {
+      return;
+    }
+    const server_version = data && data.version;
+    if (server_version == null || server_version === "") {
+      return;
+    }
+    const local = Number(proc_args.version);
+    const remote = Number(server_version);
+    if (!Number.isFinite(local) || !Number.isFinite(remote)) {
+      return;
+    }
+    if (local === remote) {
+      return;
+    }
+    request_game_client_check(`welcome version ${remote} != local ${local}`);
+  });
+
+  // Live reload only hot-swaps data.js in-process; stock chat says refresh optionally.
+  // Ask the coordinator whether HTML/game.js?v= moved — no periodic poll.
+  game_context.socket.on("reloaded", () => {
+    request_game_client_check("reloaded");
+  });
+
   // Silent socket death: game may never call disconnect(); redeploy ourselves.
   let saw_socket_connected = false;
   let socket_down_since = null;

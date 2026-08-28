@@ -4,6 +4,10 @@ Here you can review the historic development of caracAL.
 
 I do not bundle releases but with the timestamp you can usually find the relevant git commit.
 
+#### 2026-08-24
+
+Unpinned characters (`version: 0`) refetch the live game client on start and when `welcome.version` / `reloaded` show the cache is stale, then redeploy onto the new files. HTML page globals such as `last_deploy` are defined before `functions.js` so a missing inject no longer crashes the VM.
+
 #### 2026-01-23
 
 Fixed ENOENT error for nonexistent TYPECODE.out file

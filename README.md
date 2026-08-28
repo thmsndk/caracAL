@@ -4,6 +4,10 @@ A Node.js client for [adventure.land](https://adventure.land/ "Adventure Land")
 
 ## Recent Versions
 
+#### 2026-08-24
+
+Unpinned characters follow live game updates via start + `welcome`/`reloaded` (no poll). Missing HTML globals such as `last_deploy` no longer crash the game VM.
+
 #### 2026-01-23
 
 Fixed ENOENT error for nonexistent TYPECODE.out file
@@ -123,7 +127,7 @@ Each character has five fields:
 
 - realm: Which server the character should run on
 - enabled: caracAL will only run characters who have this field set to true
-- version: Which version of the game client this character should run. A value of 0 represents the latest version
+- version: Which version of the game client this character should run. A value of 0 (or omitted) follows the live client: caracAL refetches on character start, and again when `welcome.version` disagrees with the cached tree or the server emits `reloaded`. A non-zero number or a non-numeric folder name pins that cached tree and is left alone across game updates.
 
 - script: Which JavaScript script the character should run. Scripts are located in the CODE folder. Will be ignored in a TypeScript setup.
 - typescript: Which TypeScript script the character should run. Scripts are located in the TYPECODE folder. Requires enable_TYPESCRIPT to be set to true. Take note that the file ending specified still needs to be .js and not .ts .

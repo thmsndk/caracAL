@@ -24,6 +24,11 @@ function getHostname(base_url) {
   return new URL(base_url).hostname;
 }
 
+/** Config `version: 0` (or omitted) tracks the live client; anything else is pinned. */
+function follows_latest_client(version) {
+  return version == null || version === 0 || version === "0" || version === "";
+}
+
 function get_runner_files() {
   return [
     "/js/old_common_functions.js",
@@ -145,6 +150,7 @@ async function ensure_latest(base_url) {
 
   return version;
 }
+exports.follows_latest_client = follows_latest_client;
 exports.cull_versions = cull_versions;
 exports.available_versions = available_versions;
 exports.ensure_latest = ensure_latest;
