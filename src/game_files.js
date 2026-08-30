@@ -9,6 +9,7 @@ const fetch = (...args) =>
 const path = require("path");
 const { console } = require("./LogUtils");
 const { URL } = require("url");
+const { extractPageGlobals } = require("./html_globals");
 
 function checkFileExists(filepath) {
   let flag = true;
@@ -106,17 +107,56 @@ async function download_file(url, file_p) {
   return await streamPipeline(response.body, createWriteStream(file_p));
 }
 
-async function get_latest_version(base_url) {
+async function fetch_index_html(base_url) {
   const raw = await fetch(base_url);
   if (!raw.ok) {
-    throw new Error(`failed to check version: ${raw.statusText}`);
+    throw new Error(`failed to fetch index html: ${raw.statusText}`);
   }
-  const html = await raw.text();
+  return await raw.text();
+}
+
+async function get_latest_version(base_url) {
+  const html = await fetch_index_html(base_url);
   const match = /game\.js\?v=([0-9]+)"/.exec(html);
   if (!match) {
     throw new Error(`malformed version response`);
   }
-  return parseInt(match[1]);
+  return { version: parseInt(match[1]), html };
+}
+
+function locate_html_globals(base_url, version) {
+  return locate_game_file(base_url, "/html_globals.js", version);
+}
+
+async function write_html_globals(base_url, version, html) {
+  const globals_path = locate_html_globals(base_url, version);
+  const script =
+    "// Auto-extracted from official page HTML — do not edit.\n" +
+    extractPageGlobals(html);
+  await fs.writeFile(globals_path, script, "utf8");
+  return globals_path;
+}
+
+async function ensure_html_globals(base_url, version, html) {
+  const globals_path = locate_html_globals(base_url, version);
+  if (checkFileExists(globals_path)) {
+    return globals_path;
+  }
+  const page_html = html ?? (await fetch_index_html(base_url));
+  return await write_html_globals(base_url, version, page_html);
+}
+
+function resolve_html_globals_source(base_url, version) {
+  const cached = locate_html_globals(base_url, version);
+  if (checkFileExists(cached)) {
+    return cached;
+  }
+  console.warn(
+    "html_globals.js missing for version " +
+      version +
+      "; falling back to src/html_prelude.js",
+  );
+  return "./src/html_prelude.js";
 }
 
 function locate_game_file(base_url, resource, version) {
@@ -127,7 +167,7 @@ function locate_game_file(base_url, resource, version) {
 
 async function ensure_latest(base_url) {
   const base_host_name = getHostname(base_url);
-  const version = await get_latest_version(base_url);
+  const { version, html } = await get_latest_version(base_url);
   //TODO check if the version has all files and possibly redownload
   //TODO ensure that the folder we are accessing exists
 
@@ -147,6 +187,7 @@ async function ensure_latest(base_url) {
     download_file(base_url + itm, locate_game_file(base_url, itm, version)),
   );
   await Promise.all(tasks);
+  await ensure_html_globals(base_url, version, html);
 
   return version;
 }
@@ -154,6 +195,9 @@ exports.follows_latest_client = follows_latest_client;
 exports.cull_versions = cull_versions;
 exports.available_versions = available_versions;
 exports.ensure_latest = ensure_latest;
+exports.ensure_html_globals = ensure_html_globals;
+exports.resolve_html_globals_source = resolve_html_globals_source;
 exports.locate_game_file = locate_game_file;
+exports.locate_html_globals = locate_html_globals;
 exports.get_runner_files = get_runner_files;
 exports.get_game_files = get_game_files;

@@ -1,0 +1,11 @@
+node_modules
+logs
+*.log
+localStorage
+.git
+CODE/dist
+caracAL.log*
+TYPECODE.out
+.env
+*.md
+presentation

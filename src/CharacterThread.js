@@ -1,4 +1,5 @@
 const vm = require("vm");
+const nodeCanvasModule = require("canvas");
 const io = require("socket.io-client");
 const fs = require("fs").promises;
 const { JSDOM } = require("jsdom");
@@ -33,11 +34,19 @@ function make_context(upper = null, base_url) {
   result.fetch = fetch;
   result.$ = result.jQuery = node_query(result);
   result.require = require;
+  result.Buffer = Buffer;
+  result.process = process;
+  if (globalThis.FormData) result.FormData = globalThis.FormData;
+  if (globalThis.Blob) result.Blob = globalThis.Blob;
   result.console = console;
   if (upper) {
     Object.defineProperty(result, "parent", { value: upper });
     result._localStorage = upper._localStorage;
     result._sessionStorage = upper._sessionStorage;
+    const upperCaracAL = upper.caracAL;
+    if (upperCaracAL?.nodeCanvas) {
+      result.__nodeCanvas = upperCaracAL.nodeCanvas;
+    }
   } else {
     result._localStorage = ipc_storage.make_IPC_storage("ls");
     result._sessionStorage = ipc_storage.make_IPC_storage("ss");
@@ -176,7 +185,13 @@ async function make_runner(upper, CODE_file, proc_args, is_typescript) {
 }
 
 async function make_game(proc_args) {
-  const game_sources = ["./src/html_prelude.js"]
+  await game_files.ensure_html_globals(proc_args.base_url, proc_args.version);
+  const game_sources = [
+    game_files.resolve_html_globals_source(
+      proc_args.base_url,
+      proc_args.version,
+    ),
+  ]
     .concat(
       game_files
         .get_game_files()
@@ -242,6 +257,15 @@ async function make_game(proc_args) {
   extensions.map_enabled = function () {
     return proc_args.enable_map;
   };
+  extensions.nodeCanvas = nodeCanvasModule;
+  extensions.fetchUrlBytes = async function (url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${url}: ${response.status}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  };
+  game_context.nodeCanvas = nodeCanvasModule;
 
   game_context.caracAL = extensions;
 

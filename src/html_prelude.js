@@ -1,11 +1,7 @@
-// Official HTML injects these before functions.js. The VM throws ReferenceError
-// if they are missing (e.g. add_log("Last Update " + last_deploy)).
-// Keep in sync with upstream PR #21 (feat/mongo-al) + base_script.html globals.
+// Emergency fallback when html_globals.js could not be extracted/cached.
+// Normal startup uses game_files/{host}/{version}/html_globals.js from the
+// official page HTML (see src/html_globals.js).
 var last_deploy = "";
-var is_tauri = "";
+var proximity_guides = false;
 var update_notes = [];
 var update_notes_more = false;
-var discord_url = "";
-var support_email = "";
-var Prod = "";
-var Staging = "";

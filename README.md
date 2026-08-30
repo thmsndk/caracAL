@@ -6,7 +6,7 @@ A Node.js client for [adventure.land](https://adventure.land/ "Adventure Land")
 
 #### 2026-08-24
 
-Unpinned characters follow live game updates via start + `welcome`/`reloaded` (no poll). Missing HTML globals such as `last_deploy` no longer crash the game VM.
+Unpinned characters follow live game updates via start + `welcome`/`reloaded` (no poll). Page globals are auto-extracted from the official HTML into `html_globals.js` per client version; `html_prelude.js` is only an emergency fallback.
 
 #### 2026-01-23
 
