@@ -401,6 +401,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         label: "Chart",
         options: {
           type: "bar",
+          height: 32,
         },
       },
     ],
@@ -445,6 +446,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         label: "Chart",
         options: {
           type: "bar",
+          height: 32,
+          scales: {
+            y: { min: 0, max: 100 },
+          },
         },
       },
     ],
