@@ -332,6 +332,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let xp_ph = 0;
   let gold_histo = [];
   let last_beat = null;
+  /** Wall clock when last_beat was received — for stale age + timer interpolation. */
+  let last_beat_at = 0;
 
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
@@ -349,6 +351,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       xp_ph = val_ph(xp_histo);
 
       last_beat = m;
+      last_beat_at = Date.now();
 
       if (bwi.publisher && typeof bwi.publisher.requestPublish === "function") {
         bwi.publisher.requestPublish();
@@ -549,8 +552,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       options: {
         width: mmap_w,
         height: mmap_h,
+        scale: mmap_scale,
+        smoothMs: STAT_BEAT_INTERVAL,
         styles: {
-          wall: { stroke: "#c8c8c8", lineWidth: 1 },
+          wall: { stroke: "rgba(226,232,240,0.92)", lineWidth: 1.35 },
           self: { shape: "cross", fill: "#32b1f5" },
           foe: { shape: "cross", fill: "#b14f1d" },
           alert: { shape: "cross", fill: "#c10037" },
@@ -565,34 +570,46 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
   function scqTimers(s, c, q) {
     const timers = [];
-    // s is conditions or buffs
-    // Q: how do we access G? is it even possible? would like to look up the name and duration
+    const sampledAt = last_beat_at;
+    const now = Date.now();
 
     for (const conditionKey in s) {
       const condition = s[conditionKey];
-      timers.push({
-        leftText: condition.name,
-        middleText: msToTime(condition.ms),
-        percentage: (Math.max(0, condition.ms) / condition.ims) * 100,
-      });
+      timers.push(
+        timerPresentation({
+          name: condition.name,
+          ms: condition.ms,
+          ims: condition.ims,
+          sampledAt,
+          now,
+        }),
+      );
     }
 
     for (const channeldKey in c) {
       const channel = c[channeldKey];
-      timers.push({
-        leftText: channel.name,
-        middleText: msToTime(channel.ms),
-        percentage: (Math.max(0, channel.ms) / channel.ims) * 100,
-      });
+      timers.push(
+        timerPresentation({
+          name: channel.name,
+          ms: channel.ms,
+          ims: channel.ims,
+          sampledAt,
+          now,
+        }),
+      );
     }
 
     for (const actionKey in q) {
       const action = q[actionKey];
-      timers.push({
-        leftText: action.name,
-        middleText: msToTime(action.ms),
-        percentage: (Math.max(0, action.ms) / action.ims) * 100,
-      });
+      timers.push(
+        timerPresentation({
+          name: action.name,
+          ms: action.ms,
+          ims: action.ims,
+          sampledAt,
+          now,
+        }),
+      );
     }
 
     return timers;
@@ -621,21 +638,32 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         left: last_beat.map,
         middle: "",
         right: `${last_beat.real_x.toFixed()}, ${last_beat.real_y.toFixed()}`,
+        options: {
+          beatAt: last_beat_at,
+          staleAfterSec: 2,
+        },
       },
       health: quick_bar_val(last_beat.hp, last_beat.max_hp, true),
       mana: quick_bar_val(last_beat.mp, last_beat.max_mp, true),
       xp: quick_bar_val(last_beat.xp, last_beat.max_xp, true),
-      xpText: {
-        left: `XP/h ${humanize_int(xp_ph, 1)}`,
-        middle: "",
-        right: `${
-          (xp_ph <= 0 && "N/A") ||
-          prettyMilliseconds(
-            ((last_beat.max_xp - last_beat.xp) * 3600000) / xp_ph,
-            { unitCount: 2 },
-          )
-        } TTLU`,
-      },
+      xpText: (() => {
+        const ttlMs =
+          xp_ph > 0
+            ? ((last_beat.max_xp - last_beat.xp) * 3600000) / xp_ph
+            : 0;
+        return {
+          left: `XP/h ${humanize_int(xp_ph, 1)}`,
+          middle: "",
+          right:
+            ttlMs > 0
+              ? `${prettyMilliseconds(ttlMs, { unitCount: 2 })} TTLU`
+              : "N/A TTLU",
+          options:
+            ttlMs > 0
+              ? { levelUpAt: Date.now() + ttlMs, etaSuffix: " TTLU" }
+              : { levelUpAt: 0, etaFallback: "N/A TTLU" },
+        };
+      })(),
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
       bank: quick_bar_val(
         last_beat.bank_used_count,
@@ -785,73 +813,135 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   return ui;
 }
 
-const mmap_w = 200;
-const mmap_h = 150;
-const mmap_scale = 1 / 3;
+function loadMinimapGeometry() {
+  try {
+    return require("bot-web-interface/minimapGeometry");
+  } catch (e) {
+    try {
+      // Dev: sibling checkout when the installed tarball is stale.
+      return require("../../bot-web-interface/minimapGeometry");
+    } catch (e2) {
+      console.warn(
+        "caracAL: bot-web-interface/minimapGeometry missing — minimap disabled",
+        e2 && e2.message
+      );
+      return null;
+    }
+  }
+}
+function loadCountdown() {
+  try {
+    return require("bot-web-interface/countdown");
+  } catch (e) {
+    try {
+      return require("../../bot-web-interface/countdown");
+    } catch (e2) {
+      console.warn(
+        "caracAL: bot-web-interface/countdown missing — timer presentation stubbed",
+        e2 && e2.message
+      );
+      return {
+        timerPresentation: () => ({ text: "", color: "#888" }),
+      };
+    }
+  }
+}
+const mmapGeom = loadMinimapGeometry();
+const MINIMAP_AVAILABLE = Boolean(mmapGeom);
+const projectMinimapPoint = MINIMAP_AVAILABLE
+  ? mmapGeom.projectMinimapPoint
+  : () => [0, 0];
+const resolveMinimapView = MINIMAP_AVAILABLE
+  ? mmapGeom.resolveMinimapView
+  : () => ({ width: 200, height: 150, scale: 1 / 3, vision: [700, 500] });
+const DEFAULT_VISION = MINIMAP_AVAILABLE
+  ? mmapGeom.DEFAULT_VISION
+  : [700, 500];
+const createWallProjector =
+  MINIMAP_AVAILABLE && typeof mmapGeom.createWallProjector === "function"
+    ? mmapGeom.createWallProjector
+    : MINIMAP_AVAILABLE
+      ? () => mmapGeom.projectMinimapLines
+      : () => () => [];
+const { timerPresentation } = loadCountdown();
+
+const mmap_defaults = resolveMinimapView(DEFAULT_VISION);
+const mmap_w = mmap_defaults.width;
+const mmap_h = mmap_defaults.height;
+const mmap_scale = mmap_defaults.scale;
+/** Per-character wall projectors (GEO scan is the expensive bit). */
+const wallProjectors = new Map();
+
+function wallsForCharacter(name) {
+  let fn = wallProjectors.get(name);
+  if (!fn) {
+    fn = createWallProjector();
+    wallProjectors.set(name, fn);
+  }
+  return fn;
+}
 
 /**
  * Build a BWI-generic minimap payload (pixel-space lines + markers).
- * @returns {{ lines: Array, markers: Array }}
+ * Window matches character.vision (AL half-extents, default 700×500).
+ * Geometry projection must stay identical to BWI's minimapGeometry helper.
+ * @returns {{ lines: Array, markers: Array, width: number, height: number, scale: number, vision: number[] }}
  */
 function generate_minimap(game_context) {
-  const lines = [];
-  const markers = [];
-
-  function clip(v, lo, hi) {
-    return max(lo, min(v, hi));
+  if (!MINIMAP_AVAILABLE || !game_context?.character) {
+    return {
+      lines: [],
+      markers: [],
+      title: game_context?.character?.name || "",
+      map: game_context?.character?.map || "",
+      origin: [0, 0],
+      scale: 1 / 3,
+      width: 200,
+      height: 150,
+      vision: DEFAULT_VISION,
+    };
   }
+  const markers = [];
 
   const g_char = game_context.character;
   const c_x = g_char.real_x;
   const c_y = g_char.real_y;
+  const view = resolveMinimapView(g_char.vision || DEFAULT_VISION);
+  const opts = {
+    width: view.width,
+    height: view.height,
+    scale: view.scale,
+  };
 
-  function relative_coords(x, y) {
-    return [
-      (x - c_x) * mmap_scale + mmap_w / 2,
-      (y - c_y) * mmap_scale + mmap_h / 2,
-    ];
-  }
+  const lines = wallsForCharacter(g_char.name || "?")(
+    game_context.GEO,
+    c_x,
+    c_y,
+    opts,
+  );
 
-  const geom = game_context.GEO;
-  // horizontal collision (x_lines: [x, y1, y2])
-  for (let i = 0; i < geom.x_lines.length; i++) {
-    const [r_x, r_y1, r_y2] = geom.x_lines[i];
-    const l_x = floor((r_x - c_x) * mmap_scale + mmap_w / 2);
-    if (l_x < 0) continue;
-    if (l_x >= mmap_w) break;
-    const y1 = clip(floor((r_y1 - c_y) * mmap_scale + mmap_h / 2), 0, mmap_h);
-    const y2 = clip(
-      floor((r_y2 - c_y) * mmap_scale + mmap_h / 2) + 1,
-      0,
-      mmap_h,
+  function push_marker(ent, style, withLabel) {
+    const [r_x, r_y] = projectMinimapPoint(
+      ent.real_x,
+      ent.real_y,
+      c_x,
+      c_y,
+      opts,
     );
-    if (y1 !== y2) {
-      lines.push([l_x, y1, l_x, y2, "wall"]);
+    if (
+      r_x < -2 ||
+      r_x >= view.width + 2 ||
+      r_y < -2 ||
+      r_y >= view.height + 2
+    ) {
+      return;
     }
-  }
-  // vertical collision (y_lines: [y, x1, x2])
-  for (let i = 0; i < geom.y_lines.length; i++) {
-    const [r_y, r_x1, r_x2] = geom.y_lines[i];
-    const l_y = floor((r_y - c_y) * mmap_scale + mmap_h / 2);
-    if (l_y < 0) continue;
-    if (l_y >= mmap_h) break;
-    const x1 = clip(floor((r_x1 - c_x) * mmap_scale + mmap_w / 2), 0, mmap_w);
-    const x2 = clip(
-      floor((r_x2 - c_x) * mmap_scale + mmap_w / 2) + 1,
-      0,
-      mmap_w,
-    );
-    if (x1 !== x2) {
-      lines.push([x1, l_y, x2, l_y, "wall"]);
+    const marker = [r_x, r_y, style];
+    if (withLabel !== false) {
+      const label = ent.name || ent.mtype || "";
+      if (label) marker.push(label);
     }
-  }
-
-  function push_marker(ent, style) {
-    const rel = relative_coords(ent.real_x, ent.real_y);
-    const r_x = floor(rel[0]);
-    const r_y = floor(rel[1]);
-    if (r_x < 0 || r_x >= mmap_w || r_y < 0 || r_y >= mmap_h) return;
-    markers.push([r_x, r_y, style]);
+    markers.push(marker);
   }
 
   for (let ent_id in game_context.entities) {
@@ -870,11 +960,22 @@ function generate_minimap(game_context) {
 
   const trg = game_context.entities[g_char.target];
   if (trg && !trg.npc && !trg.dead) {
-    push_marker(trg, "focus");
+    // Ring only — name already comes from the entity marker above.
+    push_marker(trg, "focus", false);
   }
   push_marker(g_char, "self");
 
-  return { lines, markers };
+  return {
+    lines,
+    markers,
+    title: g_char.name || "",
+    map: g_char.map || "",
+    origin: [c_x, c_y],
+    scale: view.scale,
+    width: view.width,
+    height: view.height,
+    vision: view.vision,
+  };
 }
 
 // utils, should perhaps live in another file?
@@ -905,29 +1006,6 @@ function timeAgo(date) {
   interval = seconds / 60;
   if (interval > 1) return Math.floor(interval) + " minutes";
   return Math.floor(seconds) + " seconds";
-}
-
-function msToTime(duration) {
-  const milliseconds = Math.floor((duration % 1000) / 100);
-  const seconds = Math.floor((duration / 1000) % 60);
-  const minutes = Math.floor((duration / (1000 * 60)) % 60);
-  const hours = Math.floor((duration / (1000 * 60 * 60)) % 24);
-
-  const hoursString = hours < 10 ? "0" + hours.toString() : hours.toString();
-  const minutesString =
-    minutes < 10 ? "0" + minutes.toString() : minutes.toString();
-  const secondsString =
-    seconds < 10 ? "0" + seconds.toString() : seconds.toString();
-
-  return (
-    hoursString +
-    ":" +
-    minutesString +
-    ":" +
-    secondsString +
-    "." +
-    milliseconds.toString()
-  );
 }
 
 function getTitleName(itemInfo, G) {
