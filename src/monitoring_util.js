@@ -1,5 +1,4 @@
 const prettyMilliseconds = require("pretty-ms");
-const { PNG } = require("pngjs");
 const { STAT_BEAT_INTERVAL } = require("./CONSTANTS.js");
 const { max, min, abs, round, floor } = Math;
 
@@ -309,9 +308,7 @@ function register_stat_beat(game_context) {
 
     result.current_status = game_context.current_status;
     if (game_context.caracAL.map_enabled()) {
-      result.mmap =
-        "data:image/png;base64," +
-        generate_minimap(game_context).toString("base64");
+      result.mmap = generate_minimap(game_context);
     }
     process.send(result);
   }, STAT_BEAT_INTERVAL);
@@ -352,6 +349,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       xp_ph = val_ph(xp_histo);
 
       last_beat = m;
+
+      if (bwi.publisher && typeof bwi.publisher.requestPublish === "function") {
+        bwi.publisher.requestPublish();
+      }
     }
   });
 
@@ -377,25 +378,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       (arr.length - 1) /
       STAT_BEAT_INTERVAL
     );
-  }
-
-  const schema = [
-    {
-      name: "party_leader",
-      type: "text",
-      label: "Chief",
-      getter: () => last_beat.party || "N/A",
-    },
-  ];
-
-  if (enable_map) {
-    schema.push({
-      name: "minimap",
-      type: "image",
-      label: "Map",
-      options: { width: mmap_w, height: mmap_h },
-      getter: () => last_beat.mmap,
-    });
   }
 
   // main interface
@@ -507,59 +489,79 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     };
   });
 
-  let characterBotUI = ui.createSubBotUI(
-    [
-      // [characterName] [status] [level]
-      {
-        name: "header",
-        type: "leftMiddleRightText",
+  const characterSchema = [
+    // [characterName] [status] [level]
+    {
+      name: "header",
+      type: "leftMiddleRightText",
+    },
+    {
+      name: "header2",
+      type: "leftMiddleRightText",
+    },
+    {
+      name: "health",
+      type: "labelProgressBar",
+      label: "Health",
+      options: { color: "red" },
+    },
+    {
+      name: "mana",
+      type: "labelProgressBar",
+      label: "Mana",
+      options: { color: "blue" },
+    },
+    {
+      name: "xp",
+      type: "labelProgressBar",
+      label: "XP",
+      options: { color: "green" },
+    },
+    { name: "xpText", type: "leftMiddleRightText" },
+    {
+      name: "inv",
+      type: "labelProgressBar",
+      label: "Inventory",
+      options: { color: "brown" },
+    },
+    {
+      name: "bank",
+      type: "labelProgressBar",
+      label: "bank",
+      options: { color: "brown" },
+    },
+    {
+      name: "gold",
+      type: "leftMiddleRightText",
+    },
+    {
+      name: "timers",
+      type: "timerList",
+    },
+  ];
+
+  // Structured minimap payload (lines + markers) rendered by BWI canvas widget.
+  if (enable_map) {
+    characterSchema.splice(2, 0, {
+      name: "minimap",
+      type: "minimap",
+      label: "Map",
+      options: {
+        width: mmap_w,
+        height: mmap_h,
+        styles: {
+          wall: { stroke: "#c8c8c8", lineWidth: 1 },
+          self: { shape: "cross", fill: "#32b1f5" },
+          foe: { shape: "cross", fill: "#b14f1d" },
+          alert: { shape: "cross", fill: "#c10037" },
+          other: { shape: "cross", fill: "#284af4" },
+          focus: { shape: "ring", stroke: "#c10037", lineWidth: 1 },
+        },
       },
-      {
-        name: "header2",
-        type: "leftMiddleRightText",
-      },
-      {
-        name: "health",
-        type: "labelProgressBar",
-        label: "Health",
-        options: { color: "red" },
-      },
-      {
-        name: "mana",
-        type: "labelProgressBar",
-        label: "Mana",
-        options: { color: "blue" },
-      },
-      {
-        name: "xp",
-        type: "labelProgressBar",
-        label: "XP",
-        options: { color: "green" },
-      },
-      { name: "xpText", type: "leftMiddleRightText" },
-      {
-        name: "inv",
-        type: "labelProgressBar",
-        label: "Inventory",
-        options: { color: "brown" },
-      },
-      {
-        name: "bank",
-        type: "labelProgressBar",
-        label: "bank",
-        options: { color: "brown" },
-      },
-      {
-        name: "gold",
-        type: "leftMiddleRightText",
-      },
-      {
-        name: "timers",
-        type: "timerList",
-      },
-    ],
-    "character",
-  );
+    });
+  }
+
+  let characterBotUI = ui.createSubBotUI(characterSchema, "character");
 
   function scqTimers(s, c, q) {
     const timers = [];
@@ -605,7 +607,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       };
     }
 
-    return {
+    const data = {
       header: {
         left: char_name,
         middle: last_beat.rip ? "💀" : last_beat.current_status,
@@ -646,6 +648,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       timers: scqTimers(last_beat.s, last_beat.c, last_beat.q),
     };
+    if (enable_map) {
+      data.minimap = last_beat.mmap;
+    }
+    return data;
   });
 
   let targetBotUI = ui.createSubBotUI(
@@ -779,52 +785,26 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   return ui;
 }
 
-const mmap_cols = {
-  //transparent
-  background: [0, 0, 0, 0],
-  //brown
-  monster: [0xb1, 0x4f, 0x1d, 255],
-  //light red
-  monster_engaged: [0xc1, 0x00, 0x37, 255],
-  //dark blue
-  character: [50, 177, 245, 255],
-  //light blue
-  player: [40, 74, 244, 255],
-  //gray
-  wall: [200, 200, 200, 255],
-};
 const mmap_w = 200;
 const mmap_h = 150;
 const mmap_scale = 1 / 3;
 
+/**
+ * Build a BWI-generic minimap payload (pixel-space lines + markers).
+ * @returns {{ lines: Array, markers: Array }}
+ */
 function generate_minimap(game_context) {
-  var png = new PNG({
-    width: mmap_w,
-    height: mmap_h,
-    filterType: -1,
-  });
-  const i_data = png.data;
-  function fill_rect(x1, y1, x2, y2, col) {
-    for (let i = x1; i < x2; i++) {
-      for (let j = y1; j < y2; j++) {
-        const idd = (mmap_w * j + i) << 2;
-        i_data[idd] = col[0];
-        i_data[idd + 1] = col[1];
-        i_data[idd + 2] = col[2];
-        i_data[idd + 3] = col[3];
-      }
-    }
+  const lines = [];
+  const markers = [];
+
+  function clip(v, lo, hi) {
+    return max(lo, min(v, hi));
   }
-  function safe_fill_rect(x1, y1, x2, y2, col) {
-    x1 = max(0, min(x1, mmap_w));
-    x2 = max(0, min(x2, mmap_w));
-    y1 = max(0, min(y1, mmap_h));
-    y2 = max(0, min(y2, mmap_h));
-    fill_rect(x1, y1, x2, y2, col);
-  }
+
   const g_char = game_context.character;
   const c_x = g_char.real_x;
   const c_y = g_char.real_y;
+
   function relative_coords(x, y) {
     return [
       (x - c_x) * mmap_scale + mmap_w / 2,
@@ -832,88 +812,69 @@ function generate_minimap(game_context) {
     ];
   }
 
-  //fill with bg data
-  fill_rect(0, 0, mmap_w, mmap_h, mmap_cols.background);
-
   const geom = game_context.GEO;
-  //draw horizontal collision
+  // horizontal collision (x_lines: [x, y1, y2])
   for (let i = 0; i < geom.x_lines.length; i++) {
-    //raw line data
     const [r_x, r_y1, r_y2] = geom.x_lines[i];
     const l_x = floor((r_x - c_x) * mmap_scale + mmap_w / 2);
     if (l_x < 0) continue;
     if (l_x >= mmap_w) break;
-    safe_fill_rect(
-      l_x,
-      floor((r_y1 - c_y) * mmap_scale + mmap_h / 2),
-      l_x + 1,
+    const y1 = clip(floor((r_y1 - c_y) * mmap_scale + mmap_h / 2), 0, mmap_h);
+    const y2 = clip(
       floor((r_y2 - c_y) * mmap_scale + mmap_h / 2) + 1,
-      mmap_cols.wall,
+      0,
+      mmap_h,
     );
+    if (y1 !== y2) {
+      lines.push([l_x, y1, l_x, y2, "wall"]);
+    }
   }
-  //draw vertical collision
+  // vertical collision (y_lines: [y, x1, x2])
   for (let i = 0; i < geom.y_lines.length; i++) {
-    //raw line data
     const [r_y, r_x1, r_x2] = geom.y_lines[i];
     const l_y = floor((r_y - c_y) * mmap_scale + mmap_h / 2);
     if (l_y < 0) continue;
     if (l_y >= mmap_h) break;
-
-    safe_fill_rect(
-      floor((r_x1 - c_x) * mmap_scale + mmap_w / 2),
-      l_y,
+    const x1 = clip(floor((r_x1 - c_x) * mmap_scale + mmap_w / 2), 0, mmap_w);
+    const x2 = clip(
       floor((r_x2 - c_x) * mmap_scale + mmap_w / 2) + 1,
-      l_y + 1,
-      mmap_cols.wall,
+      0,
+      mmap_w,
     );
+    if (x1 !== x2) {
+      lines.push([x1, l_y, x2, l_y, "wall"]);
+    }
   }
 
-  function draw_blip(ent, col) {
+  function push_marker(ent, style) {
     const rel = relative_coords(ent.real_x, ent.real_y);
     const r_x = floor(rel[0]);
     const r_y = floor(rel[1]);
-    safe_fill_rect(r_x - 1, r_y, r_x + 2, r_y + 1, col);
-    safe_fill_rect(r_x, r_y - 1, r_x + 1, r_y + 2, col);
-  }
-  function pixel_circle(ent, col) {
-    const rel = relative_coords(ent.real_x, ent.real_y);
-    const r_x = floor(rel[0]);
-    const r_y = floor(rel[1]);
-    safe_fill_rect(r_x - 1, r_y - 3, r_x + 2, r_y - 2, col);
-    safe_fill_rect(r_x - 1, r_y + 3, r_x + 2, r_y + 4, col);
-    safe_fill_rect(r_x - 3, r_y - 1, r_x - 2, r_y + 2, col);
-    safe_fill_rect(r_x + 3, r_y - 1, r_x + 4, r_y + 2, col);
-
-    safe_fill_rect(r_x - 2, r_y - 2, r_x - 1, r_y - 1, col);
-    safe_fill_rect(r_x + 2, r_y + 2, r_x + 3, r_y + 3, col);
-    safe_fill_rect(r_x + 2, r_y - 2, r_x + 3, r_y - 1, col);
-    safe_fill_rect(r_x - 2, r_y + 2, r_x - 1, r_y + 3, col);
+    if (r_x < 0 || r_x >= mmap_w || r_y < 0 || r_y >= mmap_h) return;
+    markers.push([r_x, r_y, style]);
   }
 
-  //draw entities
   for (let ent_id in game_context.entities) {
     const ent = game_context.entities[ent_id];
     if (ent.npc || ent.dead) {
       continue;
     }
-    let color;
+    let style;
     if (ent.mtype) {
-      color =
-        (ent.target == g_char.name && mmap_cols.monster_engaged) ||
-        mmap_cols.monster;
+      style = (ent.target == g_char.name && "alert") || "foe";
     } else {
-      color = mmap_cols.player;
+      style = "other";
     }
-    draw_blip(ent, color);
+    push_marker(ent, style);
   }
 
   const trg = game_context.entities[g_char.target];
   if (trg && !trg.npc && !trg.dead) {
-    pixel_circle(trg, mmap_cols.monster_engaged);
+    push_marker(trg, "focus");
   }
-  draw_blip(g_char, mmap_cols.character);
+  push_marker(g_char, "self");
 
-  return PNG.sync.write(png);
+  return { lines, markers };
 }
 
 // utils, should perhaps live in another file?

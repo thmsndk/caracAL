@@ -140,7 +140,8 @@ function migrate_old_storage(path, localStorage) {
         title: cfg.web_app.title,
         port: cfg.web_app.port,
         password: null,
-        updateRate: STAT_BEAT_INTERVAL,
+        // Watchdog only — live updates are coalesced via publisher.requestPublish() on stat_beat
+        updateRate: Math.max(STAT_BEAT_INTERVAL * 10, 5000),
       });
     }
     let express_inst = bwi_instance.router;
