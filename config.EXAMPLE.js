@@ -45,7 +45,9 @@ module.exports = {
     //useful if you want to dev in regular client
     expose_TYPECODE: false,
     //which port to run webservices on
-    port: 924,
+    //Linux/macOS: use 1024+ (e.g. 1924); ports below 1024 need root
+    //Windows: 924 is fine
+    port: 1924,
   },
   characters: {
     Wizard: {

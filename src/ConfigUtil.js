@@ -6,6 +6,26 @@ const account_info = require("../account_info");
 const fs = require("fs").promises;
 const { constants } = require("fs");
 
+/** Ports below 1024 need elevated privileges on Linux/macOS (and WSL). */
+const PRIVILEGED_PORT_CEILING = 1024;
+const DEFAULT_WEB_PANEL_PORT_WINDOWS = 924;
+const DEFAULT_WEB_PANEL_PORT_UNIX = 1924;
+
+function default_web_panel_port() {
+  return process.platform === "win32"
+    ? DEFAULT_WEB_PANEL_PORT_WINDOWS
+    : DEFAULT_WEB_PANEL_PORT_UNIX;
+}
+
+function needs_elevated_bind(port) {
+  return (
+    process.platform !== "win32" &&
+    Number.isFinite(port) &&
+    port > 0 &&
+    port < PRIVILEGED_PORT_CEILING
+  );
+}
+
 async function make_auth(base_url, email, password) {
   const raw = await fetch(`${base_url}/api/signup_or_login`, {
     method: "POST",
@@ -25,10 +45,21 @@ async function make_auth(base_url, email, password) {
 
   const msg = Array.isArray(data)
     ? data.find((x) => x.message)
-    : data.infs?.find((x) => x.type === "message");
+    : data && Array.isArray(data.infs)
+      ? data.infs.find((x) => x.message || x.type === "message")
+      : null;
 
   if (!msg) {
-    throw new Error("unexpected login api response");
+    const shape = Array.isArray(data)
+      ? "array"
+      : data && typeof data === "object"
+        ? "object keys=" + Object.keys(data).slice(0, 8).join(",")
+        : typeof data;
+    throw new Error(
+      "unexpected login api response (" +
+        shape +
+        "). If you meant to use the thmsndk fork, make sure you cloned https://github.com/thmsndk/caracAL and ran: git checkout thmsn",
+    );
   }
 
   function find_auth(req) {
@@ -197,11 +228,23 @@ If you want max performance you should choose no.`,
       {
         type: "number",
         name: "port",
-        message: "What port would you like to run the web panel on?",
+        message:
+          process.platform === "win32"
+            ? "What port would you like to run the web panel on?"
+            : "What port would you like to run the web panel on?\n(Linux/macOS: ports below 1024 need root — default is 1924.)",
         when(answers) {
           return answers.use_bwi;
         },
-        default: 924,
+        default: default_web_panel_port(),
+        validate(value) {
+          if (!Number.isFinite(value) || value < 1 || value > 65535) {
+            return "Enter a port between 1 and 65535";
+          }
+          if (needs_elevated_bind(value)) {
+            return "Ports below 1024 need root on Linux/macOS. Pick 1024+ (e.g. 1924).";
+          }
+          return true;
+        },
       },
     ]);
   //console.log({realm,use_bwi,use_minimap,port});
@@ -229,7 +272,7 @@ If you want max performance you should choose no.`,
       enable_bwi: use_bwi,
       enable_minimap: use_minimap || false,
       expose_CODE: false,
-      port: port || 924,
+      port: port || default_web_panel_port(),
     },
     characters: all_chars.reduce((acc, c_name, i) => {
       acc[c_name] = {
@@ -336,7 +379,8 @@ module.exports = {
     //useful if you want to dev in regular client
     ${ezpz("web_app.expose_TYPECODE", false)},
     //which port to run webservices on
-    ${ezpz("web_app.port", 924)}
+    //Linux/macOS: avoid ports below 1024 (need root); Windows can use 924
+    ${ezpz("web_app.port", default_web_panel_port())}
   },
   characters: {
 ${Object.entries(characters)

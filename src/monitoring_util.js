@@ -844,6 +844,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
     for (const conditionKey in s) {
       const condition = s[conditionKey];
+      // Booleans / empty entries aren't timed status chips.
+      if (!condition || typeof condition !== "object") continue;
       timers.push(
         timerPresentation({
           name: condition.name,
@@ -860,6 +862,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
     for (const channeldKey in c) {
       const channel = c[channeldKey];
+      if (!channel || typeof channel !== "object") continue;
       timers.push(
         timerPresentation({
           name: channel.name,
@@ -874,6 +877,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
     for (const actionKey in q) {
       const action = q[actionKey];
+      if (!action || typeof action !== "object") continue;
       timers.push(
         timerPresentation({
           name: action.name,

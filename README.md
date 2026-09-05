@@ -2,6 +2,43 @@
 
 A Node.js client for [adventure.land](https://adventure.land/ "Adventure Land")
 
+## Install this fork (`thmsn`)
+
+If you want **this** fork (thmsndk / branch `thmsn`) — unofficial-server support, BWI monitoring updates, etc. — clone **this** repo and check out the branch. The stock README install below still points at upstream `numbereself/caracAL` `main`, which uses a different login API shape and will crash on community/Mongo game servers.
+
+```bash
+# Node 18+ LTS recommended (nvm, fnm, or system packages)
+git clone -b thmsn https://github.com/thmsndk/caracAL.git
+cd caracAL
+npm install
+node main.js
+```
+
+On first run, answer the prompts (server URL, email/password, characters, BWI). That writes `config.js`. Do not share `config.js` — it holds your session.
+
+**Already cloned the wrong repo?**
+
+```bash
+git remote -v
+# if origin is numbereself/caracAL, either start over with the clone above, or:
+git remote add thmsn https://github.com/thmsndk/caracAL.git
+git fetch thmsn
+git checkout -B thmsn thmsn/thmsn
+npm install
+node main.js
+```
+
+**Wrong branch on this fork?**
+
+```bash
+git fetch origin
+git checkout thmsn
+git pull
+npm install
+```
+
+If login still fails, delete `config.js` and run `node main.js` again so the interactive setup re-runs.
+
 ## Recent Versions
 
 #### 2026-08-24
@@ -44,7 +81,9 @@ Simply reinstall caracAL by following the steps below. You can keep the config.j
 
 The full changelog that used to be here has moved to [CHANGELOG.md](./CHANGELOG.md "the CHANGELOG.md file")
 
-## Installation on Debian/Ubuntu
+## Installation on Debian/Ubuntu (upstream `numbereself/caracAL`)
+
+> Prefer the **[Install this fork](#install-this-fork-thmsn)** section above if you want thmsndk/`thmsn`.
 
 ```bash
 #update packages
@@ -52,13 +91,12 @@ sudo apt-get update
 sudo apt-get upgrade
 sudo apt-get install git curl
 #install node version manager(nvm)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 #you need to restart your terminal here
 #so the nvm command can be recognized
-#install node 14
-#latest(16) does not like socket.io for some reason.
-nvm install 14
-#download caracAL
+#install node 18 LTS (14 is obsolete)
+nvm install 18
+#download caracAL (upstream)
 git clone https://github.com/numbereself/caracAL.git
 #switch to directory
 cd caracAL
@@ -71,9 +109,11 @@ npm install
 node main.js
 ```
 
-## Installation on Windows 10
+## Installation on Windows 10 (upstream)
 
-First download Node.js version 14 and npm from
+> Prefer the **[Install this fork](#install-this-fork-thmsn)** section above if you want thmsndk/`thmsn`.
+
+First download Node.js (18+ LTS) and npm from
 
 [https://nodejs.org/en/download/](https://nodejs.org/en/download/ "Node.js homepage")
 
@@ -82,7 +122,7 @@ Run the installer you just downloaded. MAKE SURE THAT YOU ENABLE THE "Add to PAT
 Next hit WINDOWS+R and type "powershell" in the window that opens, and hit enter. You should now be presented with the windows powershell. Copy and paste the following script
 
 ```
-#download caracAL
+#download caracAL (upstream zip of main)
 wget https://github.com/numbereself/caracAL/archive/refs/heads/main.zip -OutFile caracAL.zip
 #unzip archive
 tar -xf caracAL.zip caracAL-main
@@ -93,6 +133,15 @@ cd caracAL
 #use npm to download dependencies
 npm install
 #run caracAL
+node main.js
+```
+
+For this fork on Windows (PowerShell):
+
+```
+git clone -b thmsn https://github.com/thmsndk/caracAL.git
+cd caracAL
+npm install
 node main.js
 ```
 
@@ -115,7 +164,7 @@ log_level specifies how much logging you want. For more details refer to section
 
 log_sinks specifies where your logging goes. More details in the section [log_sinks](./README.md#log_sinks "log_sinks").
 
-The web_app section contains configuration that enables caracAL to host a webserver. The port option herein allows to choose which port the webserver should be hosted on.
+The web_app section contains configuration that enables caracAL to host a webserver. The port option herein allows to choose which port the webserver should be hosted on. Interactive setup defaults to **924** on Windows and **1924** on Linux/macOS (ports below 1024 need elevated privileges on Unix-like systems — picking 924 there often fails with `EACCES`).
 The enable_bwi option opens a monitoring panel that displays the status of the characters running within caracAL if set to true.
 The enable_minimap option configures if caracAL should generate a minimap summarizing your current game state. The minimap is located in the monitoring panel. Therefore, if the minimap is enabled, the monitoring panel will always be served and ignore the previous setting.
 The expose_CODE option shares the CODE directory, where your scripts are located, via the webserver. This is useful if you i.e. want to load the scripts you are using in caracAL from the steam client. Scripts shared in this manner will be available i.e. under the URL `localhost:924/CODE/caracAL/tests/cm_test.js`.
@@ -328,7 +377,7 @@ You can rename your custom version with many edits to a name that is not numeric
 
 ## Bot Monitoring Panel
 
-In the most recent version caracAL added the ability to check up on your bots through a web interface. It can be acessed with a browser, such as firefox or chrome. You need to enable this feature through the config.js file, the details of which are also in this document. If you run caracAL on the same machine as your browser and on the default port you can access the panel under the url `http://localhost:924/`.
+In the most recent version caracAL added the ability to check up on your bots through a web interface. It can be acessed with a browser, such as firefox or chrome. You need to enable this feature through the config.js file, the details of which are also in this document. If you run caracAL on the same machine as your browser and on the default port you can access the panel under `http://localhost:924/` (Windows default) or `http://localhost:1924/` (Linux/macOS default), matching `web_app.port` in your config.
 It looks somewhat like this:
 ![BWI Image](https://github.com/numbereself/caracAL/blob/main/presentation/bwi.png?raw=true)
 
