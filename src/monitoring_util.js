@@ -2,6 +2,196 @@ const prettyMilliseconds = require("pretty-ms");
 const { STAT_BEAT_INTERVAL } = require("./CONSTANTS.js");
 const { max, min, abs, round, floor } = Math;
 
+function loadAtlasHelpers() {
+  try {
+    return require("bot-web-interface/atlas");
+  } catch (e) {
+    try {
+      return require("../../bot-web-interface/atlas");
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+function slimItemInstance(item) {
+  if (!item || !item.name) return null;
+  const out = { name: item.name };
+  if (typeof item.level === "number") out.level = item.level;
+  if (typeof item.q === "number") out.q = item.q;
+  if (item.p) out.p = item.p;
+  return out;
+}
+
+function itemGives(gItem, stat) {
+  const gives = gItem && gItem.gives;
+  if (!Array.isArray(gives)) return false;
+  for (let i = 0; i < gives.length; i++) {
+    if (gives[i] && gives[i][0] === stat) return true;
+  }
+  return false;
+}
+
+function bestPotInstance(items, G, kind) {
+  let best = null;
+  let bestScore = -1;
+  const list = items || [];
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (!it || !it.name) continue;
+    const gItem = G && G.items && G.items[it.name];
+    const name = String(it.name);
+    const match =
+      kind === "hp"
+        ? name.startsWith("hpot") || itemGives(gItem, "hp")
+        : name.startsWith("mpot") || itemGives(gItem, "mp");
+    if (!match) continue;
+    const score = typeof it.q === "number" ? it.q : 1;
+    if (score > bestScore) {
+      bestScore = score;
+      best = slimItemInstance(it);
+    }
+  }
+  return best;
+}
+
+/** Best pot skin + total quantity across all matching pots (0 when empty). */
+function potSummary(items, G, kind) {
+  let best = null;
+  let bestScore = -1;
+  let total = 0;
+  const list = items || [];
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (!it || !it.name) continue;
+    const gItem = G && G.items && G.items[it.name];
+    const name = String(it.name);
+    const match =
+      kind === "hp"
+        ? name.startsWith("hpot") || itemGives(gItem, "hp")
+        : name.startsWith("mpot") || itemGives(gItem, "mp");
+    if (!match) continue;
+    const q = typeof it.q === "number" ? it.q : 1;
+    total += q;
+    if (q > bestScore) {
+      bestScore = q;
+      best = slimItemInstance(it);
+    }
+  }
+  const fallback = kind === "hp" ? "hpot0" : "mpot0";
+  const out = best || { name: fallback };
+  out.q = total;
+  out.showQuantity = true;
+  return out;
+}
+
+function favoriteItemStrip(character, G) {
+  const strip = [];
+  const slots = (character && character.slots) || {};
+  const mh = slimItemInstance(slots.mainhand);
+  const oh = slimItemInstance(slots.offhand);
+  if (mh) strip.push(mh);
+  if (oh) strip.push(oh);
+  const hp = bestPotInstance(character && character.items, G, "hp");
+  const mp = bestPotInstance(character && character.items, G, "mp");
+  if (hp) strip.push(hp);
+  if (mp) strip.push(mp);
+  return strip;
+}
+
+function inventoryItemGrid(character) {
+  const items = (character && character.items) || [];
+  const out = [];
+  const slots = typeof character.isize === "number" ? character.isize : 42;
+  for (let i = 0; i < slots; i++) {
+    out.push(slimItemInstance(items[i]));
+  }
+  return out;
+}
+
+function slimTradeListingsFromCharacter(character) {
+  const atlasApi = loadAtlasHelpers();
+  if (atlasApi && typeof atlasApi.slimTradeListings === "function") {
+    return atlasApi.slimTradeListings(character);
+  }
+  const slots = (character && character.slots) || {};
+  const keys = Object.keys(slots)
+    .filter((k) => k.indexOf("trade") === 0)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const out = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const it = slots[key];
+    if (!it || !it.name || typeof it.price !== "number") continue;
+    if (it.giveaway) continue;
+    const row = {
+      slot: key,
+      side: it.b ? "buy" : "sell",
+      name: it.name,
+      price: it.price,
+      showQuantity: typeof it.q === "number" && it.q > 1,
+    };
+    if (typeof it.level === "number") row.level = it.level;
+    if (typeof it.q === "number") row.q = it.q;
+    if (it.p) row.p = it.p;
+    out.push(row);
+  }
+  return out;
+}
+
+function slimGearGridFromCharacter(character) {
+  const atlasApi = loadAtlasHelpers();
+  if (atlasApi && typeof atlasApi.slimGearGrid === "function") {
+    return atlasApi.slimGearGrid(character);
+  }
+  const order = [
+    "earring1",
+    "helmet",
+    "earring2",
+    "amulet",
+    "mainhand",
+    "chest",
+    "offhand",
+    "cape",
+    "ring1",
+    "pants",
+    "ring2",
+    "orb",
+    "belt",
+    "shoes",
+    "gloves",
+    "elixir",
+  ];
+  const slots = (character && character.slots) || {};
+  const out = [];
+  for (let i = 0; i < order.length; i++) {
+    const key = order[i];
+    const slim = slimItemInstance(slots[key]);
+    if (slim) slim.slot = key;
+    out.push(slim);
+  }
+  return out;
+}
+
+function countOccupiedItems(list) {
+  if (!Array.isArray(list)) return 0;
+  let n = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] && list[i].name) n += 1;
+  }
+  return n;
+}
+
+function countTradeSlots(character) {
+  const slots = (character && character.slots) || {};
+  const keys = Object.keys(slots);
+  let n = 0;
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf("trade") === 0) n += 1;
+  }
+  return n;
+}
+
 function humanize_int(num, digits) {
   num = round(num);
   const lookup = [
@@ -51,6 +241,9 @@ function register_stat_beat(game_context) {
             const gCondition = gConditions[conditionKey];
             const newProp = { ...prop };
             newProp.name = gCondition?.name ?? prop.name ?? conditionKey;
+            newProp.skin = prop.skin ?? gCondition?.skin;
+            if (gCondition?.buff) newProp.buff = true;
+            if (gCondition?.debuff) newProp.debuff = true;
 
             switch (conditionKey) {
               case "young":
@@ -241,6 +434,24 @@ function register_stat_beat(game_context) {
       result[x] = propValue;
     });
 
+    // Inventory + gear snapshots for BWI item widgets (slim iteminstances).
+    result.items = inventoryItemGrid(character);
+    result.favorites = favoriteItemStrip(character, game_context.G);
+    result.gear = slimGearGridFromCharacter(character);
+    result.trades = slimTradeListingsFromCharacter(character);
+    result.trade_slots = countTradeSlots(character);
+    result.hpPot = potSummary(character.items, game_context.G, "hp");
+    result.mpPot = potSummary(character.items, game_context.G, "mp");
+
+    // One-shot Adventure Land icon atlas for BWI clients.
+    if (!game_context.caracAL._bwiAtlasSent && game_context.G) {
+      const atlasApi = loadAtlasHelpers();
+      if (atlasApi && typeof atlasApi.extractAtlas === "function") {
+        result.atlas = atlasApi.extractAtlas(game_context.G);
+        game_context.caracAL._bwiAtlasSent = true;
+      }
+    }
+
     if (character.bank) {
       bank = character.bank;
       updateBankCount();
@@ -337,6 +548,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
+      if (m.atlas && bwi.publisher && typeof bwi.publisher.setAtlas === "function") {
+        bwi.publisher.setAtlas(m.atlas);
+        delete m.atlas;
+      }
       gold_histo.push(m.gold);
       gold_histo = gold_histo.slice(-100);
 
@@ -511,13 +726,19 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       name: "health",
       type: "labelProgressBar",
       label: "Health",
-      options: { color: "red" },
+      options: {
+        color: "red",
+        item: { key: "hpPot", size: 28, raise: 6 },
+      },
     },
     {
       name: "mana",
       type: "labelProgressBar",
       label: "Mana",
-      options: { color: "blue" },
+      options: {
+        color: "blue",
+        item: { key: "mpPot", size: 28, raise: 6 },
+      },
     },
     {
       name: "xp",
@@ -530,17 +751,60 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       name: "inv",
       type: "labelProgressBar",
       label: "Inventory",
-      options: { color: "brown" },
+      options: {
+        color: "brown",
+        modal: {
+          key: "bag",
+          kind: "itemGrid",
+          cols: 7,
+          slots: 42,
+          modalSize: 56,
+        },
+      },
+    },
+    {
+      name: "gearBar",
+      type: "labelProgressBar",
+      label: "Gear",
+      options: {
+        color: "brown",
+        modal: {
+          key: "gear",
+          kind: "itemGrid",
+          cols: 4,
+          slots: 16,
+          modalSize: 60,
+        },
+      },
+    },
+    {
+      name: "tradesBar",
+      type: "labelProgressBar",
+      label: "Trades",
+      options: {
+        color: "brown",
+        modal: {
+          key: "trades",
+          kind: "itemStrip",
+          wrap: true,
+          modalSize: 56,
+        },
+      },
     },
     {
       name: "bank",
       type: "labelProgressBar",
-      label: "bank",
+      label: "Bank",
       options: { color: "brown" },
     },
     {
       name: "gold",
       type: "leftMiddleRightText",
+    },
+    {
+      name: "favorites",
+      type: "itemStrip",
+      options: { size: 36 },
     },
     {
       name: "timers",
@@ -585,6 +849,9 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           name: condition.name,
           ms: condition.ms,
           ims: condition.ims,
+          skin: condition.skin,
+          buff: !!condition.buff,
+          debuff: !!condition.debuff,
           sampledAt,
           now,
         }),
@@ -598,6 +865,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
           name: channel.name,
           ms: channel.ms,
           ims: channel.ims,
+          skin: channel.skin,
           sampledAt,
           now,
         }),
@@ -650,6 +918,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       health: quick_bar_val(last_beat.hp, last_beat.max_hp, true),
       mana: quick_bar_val(last_beat.mp, last_beat.max_mp, true),
+      hpPot: last_beat.hpPot || null,
+      mpPot: last_beat.mpPot || null,
       xp: quick_bar_val(last_beat.xp, last_beat.max_xp, true),
       xpText: (() => {
         const ttlMs =
@@ -670,6 +940,18 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         };
       })(),
       inv: quick_bar_val(last_beat.isize - last_beat.esize, last_beat.isize),
+      gearBar: quick_bar_val(
+        countOccupiedItems(last_beat.gear),
+        16,
+      ),
+      tradesBar: quick_bar_val(
+        (last_beat.trades || []).length,
+        Math.max(
+          last_beat.trade_slots || 0,
+          (last_beat.trades || []).length,
+          1,
+        ),
+      ),
       bank: quick_bar_val(
         last_beat.bank_used_count,
         last_beat.bank_total_count,
@@ -679,6 +961,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: "",
         right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
       },
+      favorites: last_beat.favorites || [],
+      gear: last_beat.gear || [],
+      bag: last_beat.items || [],
+      trades: last_beat.trades || [],
       timers: scqTimers(last_beat.s, last_beat.c, last_beat.q),
     };
     if (enable_map) {
@@ -764,6 +1050,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         type: "table",
         // label: "Looted (12h)",
         headers: ["When", "Item", "#"],
+        options: { itemSize: 32 },
       },
     ],
     "loot",
@@ -775,25 +1062,30 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     }
 
     const groupedLoot = last_beat.loot.reduce((acc, x) => {
-      const titleName = x.gTitle || "";
-      const itemName = x.gName;
-
-      // const levelString = getLevelString(gItem, itemInfo.level);
-
-      let htmlTitle = itemName;
-      if (titleName) {
-        htmlTitle = `${titleName} ${htmlTitle}`;
-      }
-
       const time = timeAgo(x.time);
+      const itemInst = {
+        name: x.name,
+        q: x.q,
+        showQuantity: true,
+      };
+      if (typeof x.level === "number") itemInst.level = x.level;
+      if (x.p) itemInst.p = x.p;
+
+      const label = lootItemLabel(x);
+
       const existingItem = acc.find(
-        (item) => item[0] === time && item[1] === htmlTitle,
+        (item) =>
+          item[0] === time &&
+          item[2] &&
+          item[2].name === itemInst.name &&
+          item[2].p === itemInst.p &&
+          item[2].level === itemInst.level,
       );
 
       if (existingItem) {
-        existingItem[2] += x.q;
+        existingItem[2].q += x.q;
       } else {
-        acc.push([time, htmlTitle, x.q]);
+        acc.push([time, label, itemInst]);
       }
 
       return acc;
@@ -811,7 +1103,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
             ? `${last_beat.loot.reduce((a, val) => a + val.q, 0)}`
             : "",
       },
-      loot: groupedLoot.map(([time, name, quantity]) => [time, name, quantity]),
+      loot: groupedLoot,
     };
   });
 
@@ -941,10 +1233,18 @@ function generate_minimap(game_context) {
     ) {
       return;
     }
+    // BWI marker: [x, y, style, label?, hp?] with hp in 0..1
     const marker = [r_x, r_y, style];
     if (withLabel !== false) {
       const label = ent.name || ent.mtype || "";
+      const maxHp = ent.max_hp;
+      const hpFrac =
+        typeof ent.hp === "number" && typeof maxHp === "number" && maxHp > 0
+          ? ent.hp / maxHp
+          : null;
       if (label) marker.push(label);
+      else if (hpFrac != null) marker.push("");
+      if (hpFrac != null) marker.push(hpFrac);
     }
     markers.push(marker);
   }
@@ -1018,6 +1318,13 @@ function getTitleName(itemInfo, G) {
   const titleName =
     titleKey && G.titles[titleKey] ? `${G.titles[titleKey].title}` : "";
   return titleName;
+}
+
+/** Readable loot row label: optional title + G item name. */
+function lootItemLabel(x) {
+  const base = (x && (x.gName || x.name)) || "?";
+  const title = x && x.gTitle;
+  return title ? title + " " + base : base;
 }
 
 exports.create_monitor_ui = create_monitor_ui;
