@@ -69,7 +69,7 @@ async function ev_files(locations, context) {
 
 async function make_runner(upper, CODE_file, proc_args, is_typescript) {
   const runner_sources = game_files
-    .get_runner_files()
+    .get_runner_files(proc_args.base_url, proc_args.version)
     .map((f) =>
       game_files.locate_game_file(proc_args.base_url, f, proc_args.version),
     );
@@ -194,7 +194,7 @@ async function make_game(proc_args) {
   ]
     .concat(
       game_files
-        .get_game_files()
+        .get_game_files(proc_args.base_url, proc_args.version)
         .map((f) =>
           game_files.locate_game_file(proc_args.base_url, f, proc_args.version),
         ),

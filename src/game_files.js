@@ -10,6 +10,10 @@ const path = require("path");
 const { console } = require("./LogUtils");
 const { URL } = require("url");
 const { extractPageGlobals } = require("./html_globals");
+const {
+  resolveGameFilesFromIndexHtml,
+  resolveRunnerFilesFromRunnerHtml,
+} = require("./client_scripts");
 
 function checkFileExists(filepath) {
   let flag = true;
@@ -30,7 +34,8 @@ function follows_latest_client(version) {
   return version == null || version === 0 || version === "0" || version === "";
 }
 
-function get_runner_files() {
+/** Fallback when a version folder has no client_scripts.json (pre-hardening caches). */
+function get_runner_files_fallback() {
   return [
     "/js/old_common_functions.js",
     "/js/common_functions.js",
@@ -38,7 +43,8 @@ function get_runner_files() {
     "/js/runner_compat.js",
   ];
 }
-function get_game_files() {
+
+function get_game_files_fallback() {
   return [
     "/js/pixi/fake/pixi.min.js",
     "/js/libraries/combined.js",
@@ -48,21 +54,83 @@ function get_game_files() {
     "/js/functions.js",
     "/js/game.js",
     "/js/html.js",
+    "/js/merrit_stand_notice.js",
     "/js/payments.js",
     "/js/keyboard.js",
     "/data.js",
   ];
 }
 
-function get_all_client_files() {
-  return (
-    get_game_files()
-      .concat(get_runner_files())
-      //remove duplicates
-      .filter(function (item, pos, self) {
-        return self.indexOf(item) == pos;
-      })
+function locate_client_scripts_manifest(base_url, version) {
+  const base_host_name = getHostname(base_url);
+  return `./game_files/${base_host_name}/${version}/client_scripts.json`;
+}
+
+function read_client_scripts_manifest(base_url, version) {
+  const manifest_path = locate_client_scripts_manifest(base_url, version);
+  if (!checkFileExists(manifest_path)) {
+    return null;
+  }
+  try {
+    const raw = JSON.parse(fs_sync.readFileSync(manifest_path, "utf8"));
+    if (
+      !raw ||
+      !Array.isArray(raw.game) ||
+      !Array.isArray(raw.runner) ||
+      raw.game.length === 0 ||
+      raw.runner.length === 0
+    ) {
+      return null;
+    }
+    return raw;
+  } catch (e) {
+    console.warn("invalid client_scripts.json for version " + version, e);
+    return null;
+  }
+}
+
+async function write_client_scripts_manifest(base_url, version, manifest) {
+  const manifest_path = locate_client_scripts_manifest(base_url, version);
+  await fs.writeFile(
+    manifest_path,
+    JSON.stringify(
+      {
+        version,
+        generated_from: "official index + runner HTML",
+        game: manifest.game,
+        runner: manifest.runner,
+      },
+      null,
+      2,
+    ) + "\n",
+    "utf8",
   );
+  return manifest_path;
+}
+
+/** Prefer HTML-derived manifest; fall back to the static list for old caches. */
+function get_game_files(base_url, version) {
+  if (base_url != null && version != null) {
+    const manifest = read_client_scripts_manifest(base_url, version);
+    if (manifest) return manifest.game;
+  }
+  return get_game_files_fallback();
+}
+
+function get_runner_files(base_url, version) {
+  if (base_url != null && version != null) {
+    const manifest = read_client_scripts_manifest(base_url, version);
+    if (manifest) return manifest.runner;
+  }
+  return get_runner_files_fallback();
+}
+
+function get_all_client_files(base_url, version) {
+  return get_game_files(base_url, version)
+    .concat(get_runner_files(base_url, version))
+    .filter(function (item, pos, self) {
+      return self.indexOf(item) == pos;
+    });
 }
 
 async function cull_versions(base_url, exclusions) {
@@ -111,6 +179,15 @@ async function fetch_index_html(base_url) {
   const raw = await fetch(base_url);
   if (!raw.ok) {
     throw new Error(`failed to fetch index html: ${raw.statusText}`);
+  }
+  return await raw.text();
+}
+
+async function fetch_runner_html(base_url) {
+  const url = base_url.replace(/\/?$/, "/") + "runner";
+  const raw = await fetch(url);
+  if (!raw.ok) {
+    throw new Error(`failed to fetch runner html: ${raw.statusText}`);
   }
   return await raw.text();
 }
@@ -165,16 +242,28 @@ function locate_game_file(base_url, resource, version) {
   return `./game_files/${base_host_name}/${version}/${file_name}`;
 }
 
+/**
+ * Download URL for a caracAL resource path. Fakes are also hosted upstream
+ * under /js/.../fake/ and are fetched like any other client file.
+ */
+function official_download_url(base_url, resource) {
+  return base_url.replace(/\/?$/, "") + resource;
+}
+
 async function ensure_latest(base_url) {
   const base_host_name = getHostname(base_url);
   const { version, html } = await get_latest_version(base_url);
-  //TODO check if the version has all files and possibly redownload
-  //TODO ensure that the folder we are accessing exists
+  const runner_html = await fetch_runner_html(base_url);
+  const game = resolveGameFilesFromIndexHtml(html);
+  const runner = resolveRunnerFilesFromRunnerHtml(runner_html);
 
   const fpath = `./game_files/${base_host_name}/${version}`;
-
   await fs.mkdir(fpath, { recursive: true });
-  const target_files = get_all_client_files().filter(
+  await write_client_scripts_manifest(base_url, version, { game, runner });
+  // Refresh page globals every ensure so new injects (proximity_guides, etc.) land.
+  await write_html_globals(base_url, version, html);
+
+  const target_files = get_all_client_files(base_url, version).filter(
     (resource) =>
       !checkFileExists(locate_game_file(base_url, resource, version)),
   );
@@ -184,13 +273,16 @@ async function ensure_latest(base_url) {
     console.log("downloading game files for version " + version, target_files);
   }
   const tasks = target_files.map((itm) =>
-    download_file(base_url + itm, locate_game_file(base_url, itm, version)),
+    download_file(
+      official_download_url(base_url, itm),
+      locate_game_file(base_url, itm, version),
+    ),
   );
   await Promise.all(tasks);
-  await ensure_html_globals(base_url, version, html);
 
   return version;
 }
+
 exports.follows_latest_client = follows_latest_client;
 exports.cull_versions = cull_versions;
 exports.available_versions = available_versions;
@@ -199,5 +291,8 @@ exports.ensure_html_globals = ensure_html_globals;
 exports.resolve_html_globals_source = resolve_html_globals_source;
 exports.locate_game_file = locate_game_file;
 exports.locate_html_globals = locate_html_globals;
+exports.locate_client_scripts_manifest = locate_client_scripts_manifest;
 exports.get_runner_files = get_runner_files;
 exports.get_game_files = get_game_files;
+exports.get_game_files_fallback = get_game_files_fallback;
+exports.get_runner_files_fallback = get_runner_files_fallback;

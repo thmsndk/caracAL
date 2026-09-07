@@ -4,6 +4,12 @@ Here you can review the historic development of caracAL.
 
 I do not bundle releases but with the timestamp you can usually find the relevant git commit.
 
+#### 2026-09-07
+
+Derive game/runner script lists from the official index and `/runner` HTML on each `ensure_latest`, persist `client_scripts.json` per version, and refresh `html_globals.js`. First-party `/js/*.js` additions (e.g. `merrit_stand_notice.js`) are picked up automatically; browser-only vendors stay rewritten/skipped. Fallback static lists remain for old caches without a manifest.
+
+Also: download and eval `/js/merrit_stand_notice.js` — official `game.js` (v8507+) calls `show_merrit_stand_notice` on `merrit_status` without a typeof guard.
+
 #### 2026-08-30
 
 Auto-extract official page globals into `game_files/{host}/{version}/html_globals.js` when refreshing the client (no more hand-maintaining `html_prelude.js` for each upstream inject). `proximity_guides` emergency fallback remains in `html_prelude.js` if extraction fails.

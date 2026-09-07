@@ -43,7 +43,7 @@ If login still fails, delete `config.js` and run `node main.js` again so the int
 
 #### 2026-08-24
 
-Unpinned characters follow live game updates via start + `welcome`/`reloaded` (no poll). Page globals are auto-extracted from the official HTML into `html_globals.js` per client version; `html_prelude.js` is only an emergency fallback.
+Unpinned characters follow live game updates via start + `welcome`/`reloaded` (no poll). Page globals are auto-extracted from the official HTML into `html_globals.js` per client version; `html_prelude.js` is only an emergency fallback. Game/runner script lists are derived from the official index and `/runner` HTML into `client_scripts.json` so new first-party scripts are downloaded without a caracAL release.
 
 #### 2026-01-23
 

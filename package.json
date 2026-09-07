@@ -4,7 +4,7 @@
   "description": "caracAL - Node client for adventure.land",
   "main": "main.js",
   "scripts": {
-    "test": "node --test src/game_files.test.js src/html_globals.test.js"
+    "test": "node --test src/game_files.test.js src/html_globals.test.js src/client_scripts.test.js"
   },
   "author": "number_e",
   "license": "MIT",
