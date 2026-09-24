@@ -4,6 +4,12 @@ Here you can review the historic development of caracAL.
 
 I do not bundle releases but with the timestamp you can usually find the relevant git commit.
 
+#### 2026-09-24
+
+First-load deadline is sized from a TCP/TLS RTT probe to the realm host (`base + 12×rtt`, clamped 14s–60s) instead of a flat 14s — high-latency Asia hops get headroom without slowing EU.
+
+`welcome.version` only triggers a client refresh when the server is *ahead* of the local cache. Welcome behind local (common when HTML is newer than a realm’s announced version) no longer spams `game_client_check` mid-connect.
+
 #### 2026-09-07
 
 Derive game/runner script lists from the official index and `/runner` HTML on each `ensure_latest`, persist `client_scripts.json` per version, and refresh `html_globals.js`. First-party `/js/*.js` additions (e.g. `merrit_stand_notice.js`) are picked up automatically; browser-only vendors stay rewritten/skipped. Fallback static lists remain for old caches without a manifest.

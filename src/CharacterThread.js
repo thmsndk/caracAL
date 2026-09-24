@@ -9,6 +9,12 @@ const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const monitoring_util = require("./monitoring_util");
 const ipc_storage = require("./ipcStorage");
+const {
+  parseRealmHost,
+  probeRealmRttMs,
+  loadDeadlineMsFromRtt,
+  shouldRefreshClientForWelcome,
+} = require("./realm_rtt");
 
 const LogUtils = require("./LogUtils");
 const { console } = LogUtils;
@@ -269,6 +275,24 @@ async function make_game(proc_args) {
 
   game_context.caracAL = extensions;
 
+  /** Cleared in new_game_logic once the character is fully in-game. */
+  let reload_task = null;
+
+  const parsedRealm = parseRealmHost(realmHost);
+  const probePort =
+    proc_args.realm_port ||
+    parsedRealm.port ||
+    ((proc_args.base_url || "").startsWith("http://") ? 80 : 443);
+  const probeTls = !(proc_args.base_url || "").startsWith("http://");
+  const rttMs = await probeRealmRttMs(parsedRealm.host, {
+    port: probePort,
+    tls: probeTls,
+  });
+  const reload_timeout_ms = loadDeadlineMsFromRtt(rttMs);
+  console.log(
+    `realm RTT probe ${parsedRealm.host}:${probePort} ≈${rttMs}ms → load deadline ${Math.round(reload_timeout_ms / 1000)}s`,
+  );
+
   const old_ng_logic = game_context.new_game_logic;
   game_context.new_game_logic = function () {
     old_ng_logic();
@@ -380,15 +404,14 @@ async function make_game(proc_args) {
     }
   });
   vm.runInContext("the_game()", game_context);
-  const reload_timeout = 14;
-  const reload_task = setTimeout(
+  reload_task = setTimeout(
     function () {
       console.warn(
-        `game not loaded after ${reload_timeout} seconds, reloading`,
+        `game not loaded after ${Math.round(reload_timeout_ms / 1000)}s (rtt≈${rttMs}ms), reloading`,
       );
       extensions.deploy();
     },
-    reload_timeout * 1000 + 100,
+    reload_timeout_ms + 100,
   );
   console.log("game instance constructed");
 
@@ -418,13 +441,19 @@ async function make_game(proc_args) {
     }
     const local = Number(proc_args.version);
     const remote = Number(server_version);
-    if (!Number.isFinite(local) || !Number.isFinite(remote)) {
+    if (!shouldRefreshClientForWelcome(local, remote)) {
+      if (
+        Number.isFinite(local) &&
+        Number.isFinite(remote) &&
+        remote < local
+      ) {
+        console.warn(
+          `welcome version ${remote} behind local ${local} — keep local, skip client refresh`,
+        );
+      }
       return;
     }
-    if (local === remote) {
-      return;
-    }
-    request_game_client_check(`welcome version ${remote} != local ${local}`);
+    request_game_client_check(`welcome version ${remote} > local ${local}`);
   });
 
   // Live reload only hot-swaps data.js in-process; stock chat says refresh optionally.
