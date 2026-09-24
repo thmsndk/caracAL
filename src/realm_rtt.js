@@ -10,8 +10,11 @@ const tls = require("node:tls");
 const LOAD_DEADLINE_MIN_MS = 14_000;
 /** Cap so a dead host still fails and sibling recovery can act. */
 const LOAD_DEADLINE_MAX_MS = 60_000;
-/** Fixed overhead (auth, assets, new_game_logic) atop RTT. */
-const LOAD_DEADLINE_BASE_MS = 8_000;
+/**
+ * Additive base for deadline math. Same as the floor so RTT always adds headroom
+ * instead of fighting a lower base that kept Asia (~400–600ms) clamped at 14s.
+ */
+const LOAD_DEADLINE_BASE_MS = LOAD_DEADLINE_MIN_MS;
 /** Multiplier on probed RTT (Asia ~200–800ms → modest headroom; multi-second → long). */
 const LOAD_DEADLINE_RTT_FACTOR = 12;
 /** Give up probing after this — treat as worst-case RTT for deadline math. */
@@ -101,6 +104,7 @@ function probeRealmRttMs(host, opts = {}) {
 
 /**
  * First-load deadline from probed RTT.
+ * Nearby EU (~50–100ms) stays ~14–15s; Asia-typical (~450ms) ≈19s; slow Asia (~800ms) ≈24s.
  * @param {number} rttMs
  * @param {{ minMs?: number, maxMs?: number, baseMs?: number, factor?: number }} [opts]
  */

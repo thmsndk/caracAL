@@ -26,16 +26,22 @@ describe("parseRealmHost", () => {
 });
 
 describe("loadDeadlineMsFromRtt", () => {
-  it("keeps the historical floor for low RTT", () => {
-    assert.equal(loadDeadlineMsFromRtt(40), LOAD_DEADLINE_MIN_MS);
-    assert.equal(loadDeadlineMsFromRtt(200), LOAD_DEADLINE_MIN_MS);
+  it("keeps nearby realms near the historical floor", () => {
+    assert.equal(loadDeadlineMsFromRtt(40), LOAD_DEADLINE_MIN_MS + 12 * 40);
+    assert.ok(loadDeadlineMsFromRtt(40) < LOAD_DEADLINE_MIN_MS + 1_000);
   });
 
-  it("scales up for high RTT", () => {
+  it("gives Asia-typical RTT headroom above the floor", () => {
+    const asia = loadDeadlineMsFromRtt(450);
+    assert.ok(asia > LOAD_DEADLINE_MIN_MS);
+    assert.equal(asia, LOAD_DEADLINE_MIN_MS + 12 * 450);
+  });
+
+  it("scales further for high RTT", () => {
     const mid = loadDeadlineMsFromRtt(800);
     assert.ok(mid > LOAD_DEADLINE_MIN_MS);
     assert.ok(mid < LOAD_DEADLINE_MAX_MS);
-    assert.equal(mid, 8_000 + 12 * 800);
+    assert.equal(mid, LOAD_DEADLINE_MIN_MS + 12 * 800);
   });
 
   it("caps at max", () => {
