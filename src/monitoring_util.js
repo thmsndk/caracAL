@@ -122,18 +122,32 @@ function slimTradeListingsFromCharacter(character) {
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const it = slots[key];
-    if (!it || !it.name || typeof it.price !== "number") continue;
+    if (!it || !it.name) continue;
     if (it.giveaway) continue;
+    let want = null;
+    if (!it.b && it.want != null) {
+      if (typeof it.want === "string" && it.want) {
+        want = { name: it.want };
+      } else if (typeof it.want === "object" && typeof it.want.name === "string" && it.want.name) {
+        want = { name: it.want.name };
+        if (typeof it.want.level === "number") want.level = it.want.level;
+        if (typeof it.want.q === "number") want.q = it.want.q;
+        if (typeof it.want.p === "string" && it.want.p) want.p = it.want.p;
+      }
+    }
+    const hasGold = typeof it.price === "number" && Number.isFinite(it.price);
+    if (!hasGold && !want) continue;
     const row = {
       slot: key,
-      side: it.b ? "buy" : "sell",
+      side: it.b ? "buy" : want ? "swap" : "sell",
       name: it.name,
-      price: it.price,
       showQuantity: typeof it.q === "number" && it.q > 1,
     };
+    if (hasGold) row.price = it.price;
     if (typeof it.level === "number") row.level = it.level;
     if (typeof it.q === "number") row.q = it.q;
     if (it.p) row.p = it.p;
+    if (want) row.want = want;
     out.push(row);
   }
   return out;
@@ -545,6 +559,25 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let last_beat = null;
   /** Wall clock when last_beat was received — for stale age + timer interpolation. */
   let last_beat_at = 0;
+  /** Same-spot dwell: reset when map/coords move past epsilon. */
+  let sit_anchor = null;
+  const SIT_EPS = 8;
+  const SIT_SHOW_MS = 10_000;
+
+  function sitDurationMs(beat, now) {
+    const x = beat.real_x;
+    const y = beat.real_y;
+    const map = beat.map;
+    if (
+      !sit_anchor ||
+      sit_anchor.map !== map ||
+      Math.abs(sit_anchor.x - x) > SIT_EPS ||
+      Math.abs(sit_anchor.y - y) > SIT_EPS
+    ) {
+      sit_anchor = { map, x, y, since: now };
+    }
+    return now - sit_anchor.since;
+  }
 
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
@@ -913,7 +946,12 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       header2: {
         left: last_beat.map,
-        middle: "",
+        middle: (() => {
+          const sitMs = sitDurationMs(last_beat, Date.now());
+          return sitMs >= SIT_SHOW_MS
+            ? `sit ${prettyMilliseconds(sitMs, { unitCount: 2 })}`
+            : "";
+        })(),
         right: `${last_beat.real_x.toFixed()}, ${last_beat.real_y.toFixed()}`,
         options: {
           beatAt: last_beat_at,
