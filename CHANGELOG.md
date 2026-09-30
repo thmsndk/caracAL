@@ -4,6 +4,10 @@ Here you can review the historic development of caracAL.
 
 I do not bundle releases but with the timestamp you can usually find the relevant git commit.
 
+#### 2026-09-30
+
+Replace Adventure Land `clone` after game/runner load with a realm-safe overlay so JSDOM+`vm.createContext` no longer throws `"type not supported"` on ordinary VM objects (common during `smart_move` / map travel). Background and a possible same-realm loader follow-up: `docs/jsdom-vm-realm-clone.md`.
+
 #### 2026-09-24
 
 First-load deadline is sized from a TCP/TLS RTT probe to the realm host (`base + 12×rtt`, clamped 14s–60s) instead of a flat 14s — high-latency Asia hops get headroom without slowing EU.

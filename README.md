@@ -39,7 +39,15 @@ npm install
 
 If login still fails, delete `config.js` and run `node main.js` again so the interactive setup re-runs.
 
+## Docs for contributors / agents
+
+- [`docs/jsdom-vm-realm-clone.md`](docs/jsdom-vm-realm-clone.md) — `"type not supported"` from AL `clone` under JSDOM+`vm`, the shipped overlay, and why a same-realm script loader is still worth exploring.
+
 ## Recent Versions
+
+#### 2026-09-30
+
+Realm-safe `clone` overlay after game/runner load (fixes `"type not supported"` under JSDOM+`vm`). See `docs/jsdom-vm-realm-clone.md`.
 
 #### 2026-08-24
 

@@ -15,6 +15,7 @@ const {
   loadDeadlineMsFromRtt,
   shouldRefreshClientForWelcome,
 } = require("./realm_rtt");
+const { apply_realm_safe_clone } = require("./realm_safe_clone");
 
 const LogUtils = require("./LogUtils");
 const { console } = LogUtils;
@@ -116,6 +117,8 @@ async function make_runner(upper, CODE_file, proc_args, is_typescript) {
     runner_context,
   );
   await ev_files(runner_sources, runner_context);
+  // JSDOM+vm breaks AL clone()'s instanceof checks — see docs/jsdom-vm-realm-clone.md
+  apply_realm_safe_clone(runner_context);
   runner_context.send_cm = function (to, data) {
     process.send({
       type: "cm",
@@ -212,6 +215,8 @@ async function make_game(proc_args) {
   game_context.io = io;
   game_context.bowser = {};
   await ev_files(game_sources, game_context);
+  // JSDOM+vm breaks AL clone()'s instanceof checks — see docs/jsdom-vm-realm-clone.md
+  apply_realm_safe_clone(game_context);
   game_context.VERSION = "" + game_context.G.version;
   game_context.Local = "";
   game_context.Dev = "";
