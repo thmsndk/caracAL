@@ -4,12 +4,12 @@
   "description": "caracAL - Node client for adventure.land",
   "main": "main.js",
   "scripts": {
-    "test": "node --test src/game_files.test.js src/html_globals.test.js src/client_scripts.test.js src/realm_rtt.test.js src/realm_safe_clone.test.js"
+    "test": "node --test src/game_files.test.js src/html_globals.test.js src/html_prelude.test.js src/client_scripts.test.js src/realm_rtt.test.js src/realm_safe_clone.test.js"
   },
   "author": "number_e",
   "license": "MIT",
   "dependencies": {
-    "bot-web-interface": "file:bot-web-interface-2.3.0.tgz",
+    "bot-web-interface": "file:bot-web-interface-2.3.1.tgz",
     "canvas": "^2.11.2",
     "cloneable-readable": "^3.0.0",
     "inquirer": "^8.2.6",
