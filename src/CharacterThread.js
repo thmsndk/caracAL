@@ -1,5 +1,18 @@
 const vm = require("vm");
-const nodeCanvasModule = require("canvas");
+const LogUtils = require("./LogUtils");
+const { console } = LogUtils;
+let nodeCanvasModule = null;
+try {
+  nodeCanvasModule = require("canvas");
+} catch (err) {
+  // Optional: minimap/BWI drawing only. Missing native canvas.node must not block bots.
+  console.warn("canvas unavailable; continuing without nodeCanvas:", err && err.message);
+  nodeCanvasModule = {
+    createCanvas() {
+      throw new Error("node-canvas native addon missing");
+    },
+  };
+}
 const io = require("socket.io-client");
 const fs = require("fs").promises;
 const { JSDOM } = require("jsdom");
@@ -16,9 +29,6 @@ const {
   shouldRefreshClientForWelcome,
 } = require("./realm_rtt");
 const { apply_realm_safe_clone } = require("./realm_safe_clone");
-
-const LogUtils = require("./LogUtils");
-const { console } = LogUtils;
 
 process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);

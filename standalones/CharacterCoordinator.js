@@ -302,13 +302,15 @@ function migrate_old_storage(path, localStorage) {
     if (cfg.enable_TYPECODE) {
       args.typescript_file = char_block.typescript;
     }
-    // Node permission model: --allow-net requires Node 22+. Node 20 blocks network when
-    // permission is enabled, so skip the sandbox on older runtimes (canvas + sheet fetch need net).
+    // Node 24 dropped --allow-net; permission model also breaks native canvas resolve
+    // on some Windows setups. Skip sandbox when AL_CARACAL_NO_PERMISSION=1 or Node>=24.
     const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+    const skipPermission =
+      process.env.AL_CARACAL_NO_PERMISSION === "1" || nodeMajor >= 24;
     const permissionFlag =
       nodeMajor >= 24 ? "--permission" : "--experimental-permission";
     const permissionArgv =
-      nodeMajor >= 22
+      !skipPermission && nodeMajor >= 22
         ? [
             permissionFlag,
             "--allow-addons",
