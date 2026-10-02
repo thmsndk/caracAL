@@ -207,12 +207,19 @@ function migrate_old_storage(path, localStorage) {
   //attempts to softkill child processes
   //by sending an ipc if the client is connected and giving some timeout
   //why not actual SIGTERM? cause windows cant even
-  async function softkill_block(char_block) {
+  async function softkill_block(char_block, opts = {}) {
+    const restartAfter = opts.restartAfter === true;
     const proc = char_block.instance;
+    const was_connected = !!char_block.connected;
+    // Prevent exit-handler auto-restart while we intentionally stop (redeploy /
+    // shutdown). Without this, softkill+concurrent deploy can orphan a live
+    // process: instance is nulled, exit starts A, deploy starts B, A is forgotten.
+    char_block.suppress_auto_restart = !restartAfter;
     char_block.instance = null;
+    char_block.connected = false;
     char_block.last_stat_beat = Date.now();
     if (proc) {
-      if (char_block.connected) {
+      if (was_connected) {
         console.log("telling client to self-terminate");
         safe_send(proc, {
           type: "closing_client",
@@ -229,10 +236,49 @@ function migrate_old_storage(path, localStorage) {
         if (ended_graceful) {
           return;
         }
+      } else {
+        // Not yet marked connected — still try IPC so socket can drop cleanly.
+        safe_send(proc, { type: "closing_client" });
+        await sleep(200);
       }
       console.log("Hard-terminating client");
-      proc.kill("SIGKILL");
+      try {
+        proc.kill("SIGKILL");
+      } catch (_) {}
     }
+  }
+
+  const AUTH_FAIL_BACKOFF_BASE_MS = 30_000;
+  const AUTH_FAIL_BACKOFF_MAX_MS = 10 * 60_000;
+
+  function note_auth_fail(char_block, char_name, reason) {
+    const strikes = (char_block.auth_fail_strikes || 0) + 1;
+    char_block.auth_fail_strikes = strikes;
+    const wait = Math.min(
+      AUTH_FAIL_BACKOFF_MAX_MS,
+      AUTH_FAIL_BACKOFF_BASE_MS * Math.pow(2, Math.min(strikes - 1, 5)),
+    );
+    char_block.auth_backoff_until = Date.now() + wait;
+    console.warn(
+      `auth_fail ${char_name} strike=${strikes} reason=${reason} — backoff ${Math.round(wait / 1000)}s`,
+    );
+  }
+
+  function clear_auth_fail(char_block) {
+    char_block.auth_fail_strikes = 0;
+    char_block.auth_backoff_until = 0;
+  }
+
+  async function wait_auth_backoff(char_name, char_block) {
+    const until = char_block.auth_backoff_until || 0;
+    const wait = until - Date.now();
+    if (wait <= 0) {
+      return;
+    }
+    console.warn(
+      `deferring start of ${char_name} for ${Math.round(wait / 1000)}s (auth backoff)`,
+    );
+    await sleep(wait);
   }
 
   function update_siblings_and_acc(info) {
@@ -251,6 +297,17 @@ function migrate_old_storage(path, localStorage) {
 
   async function do_start_char(char_name) {
     const char_block = character_manage[char_name];
+    await wait_auth_backoff(char_name, char_block);
+    // Never fork on top of a live child — that orphans the old process and
+    // leaves it holding the character auth slot (authentication_failed thrash).
+    if (char_block.instance) {
+      console.warn(
+        `do_start_char ${char_name}: existing instance still present — softkilling first`,
+      );
+      await softkill_block(char_block);
+      await sleep(50);
+    }
+    char_block.suppress_auto_restart = false;
     let realm = my_acc.resolve_realm(char_block.realm);
     if (!realm) {
       console.warn(
@@ -339,8 +396,12 @@ function migrate_old_storage(path, localStorage) {
         char_block.monitor = null;
       }
       char_block.connected = false;
-      char_block.instance = null;
-      if (char_block.enabled) {
+      if (char_block.instance === result) {
+        char_block.instance = null;
+      }
+      const suppress = char_block.suppress_auto_restart;
+      char_block.suppress_auto_restart = false;
+      if (char_block.enabled && !suppress) {
         start_char(char_name).catch((e) => {
           console.error(`failed to restart ${char_name}`, e);
         });
@@ -363,7 +424,20 @@ function migrate_old_storage(path, localStorage) {
         case "connected":
           char_block.connected = true;
           char_block.last_stat_beat = Date.now();
+          clear_auth_fail(char_block);
           update_siblings_and_acc(my_acc.response);
+          break;
+        case "auth_fail":
+          note_auth_fail(char_block, char_name, m.reason || "auth_fail");
+          // Softkill this client; exit is suppressed — we restart after backoff.
+          softkill_block(char_block).then(() => {
+            if (!char_block.enabled) {
+              return;
+            }
+            start_char(char_name).catch((e) => {
+              console.error(`failed to restart ${char_name} after auth_fail`, e);
+            });
+          });
           break;
         case "deploy":
           //check for existing charblock, adjust parameters and kill it
@@ -381,15 +455,15 @@ function migrate_old_storage(path, localStorage) {
           }
           candidate.script = m.script || char_block.script;
           candidate.version = m.version || char_block.version;
-          if (candidate.instance) {
-            softkill_block(candidate);
-            candidate.connected = false; //TODO i need to refractor lifecycle management
-          } else {
-            candidate.connected = false;
+          candidate.connected = false;
+          (async () => {
+            if (candidate.instance || candidate.starting) {
+              await softkill_block(candidate);
+            }
             start_char(new_char_name).catch((e) => {
               console.error(`failed to start ${new_char_name}`, e);
             });
-          }
+          })();
           break;
         case "game_client_check":
           // welcome.version / reloaded: event-driven refresh for unpinned chars

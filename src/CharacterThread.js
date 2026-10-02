@@ -292,6 +292,58 @@ async function make_game(proc_args) {
 
   /** Cleared in new_game_logic once the character is fully in-game. */
   let reload_task = null;
+  /** Auth / ingame rejects must not spam 15s redeploys — coordinator owns backoff. */
+  let auth_fail_handled = false;
+
+  function clear_first_load_reload() {
+    if (reload_task != null) {
+      clearTimeout(reload_task);
+      reload_task = null;
+    }
+  }
+
+  function schedule_auth_fail_backoff(reason) {
+    if (auth_fail_handled) {
+      return;
+    }
+    auth_fail_handled = true;
+    clear_first_load_reload();
+    console.warn(
+      `auth/login rejected (${reason}) — cancel first-load reload; coordinator will backoff`,
+    );
+    try {
+      process.send({ type: "auth_fail", reason: String(reason || "unknown") });
+    } catch (_) {}
+  }
+
+  function is_auth_reject_payload(data) {
+    if (data == null) {
+      return false;
+    }
+    if (typeof data === "string") {
+      const s = data.toLowerCase();
+      return (
+        s.includes("authentication_failed") ||
+        s.includes("characters_unconfirmed") ||
+        s.includes("failed: password_issue") ||
+        s.includes("failed: ingame") ||
+        s.includes("wrong passphrase") ||
+        s.includes("authorization_in_progress") ||
+        s.includes("authorization in progress")
+      );
+    }
+    if (typeof data === "object") {
+      const phrase = typeof data.phrase === "string" ? data.phrase : "";
+      const message =
+        typeof data.message === "string"
+          ? data.message
+          : typeof data.reason === "string"
+            ? data.reason
+            : "";
+      return is_auth_reject_payload(phrase) || is_auth_reject_payload(message);
+    }
+    return false;
+  }
 
   const parsedRealm = parseRealmHost(realmHost);
   const probePort =
@@ -311,7 +363,7 @@ async function make_game(proc_args) {
   const old_ng_logic = game_context.new_game_logic;
   game_context.new_game_logic = function () {
     old_ng_logic();
-    clearTimeout(reload_task);
+    clear_first_load_reload();
     //people reported bad performance when switching maps
     //and this allegedly fixes it.
     vm.runInContext("pause()", game_context);
@@ -386,6 +438,17 @@ async function make_game(proc_args) {
       old_add_log(msg,col);
       for(let [msg, col] of game_logs) {
         caracAL.log.info({col:col, type:"game_logs"}, msg);
+        try {
+          if (typeof msg === "string" && (
+            msg.indexOf("authentication_failed") !== -1 ||
+            msg.indexOf("characters_unconfirmed") !== -1 ||
+            msg.indexOf("authorization_in_progress") !== -1 ||
+            msg.indexOf("Authorization in progress") !== -1 ||
+            msg.indexOf("Wrong passphrase") !== -1
+          )) {
+            caracAL._onAuthReject && caracAL._onAuthReject(msg);
+          }
+        } catch (e) {}
       }
       game_logs = [];
     }
@@ -393,6 +456,7 @@ async function make_game(proc_args) {
   `,
     game_context,
   );
+  extensions._onAuthReject = schedule_auth_fail_backoff;
   //show_json causes a popup so it must be important
   //therefore we use warn level here
   vm.runInContext(
@@ -421,6 +485,9 @@ async function make_game(proc_args) {
   vm.runInContext("the_game()", game_context);
   reload_task = setTimeout(
     function () {
+      if (auth_fail_handled) {
+        return;
+      }
       console.warn(
         `game not loaded after ${Math.round(reload_timeout_ms / 1000)}s (rtt≈${rttMs}ms), reloading`,
       );
@@ -432,6 +499,27 @@ async function make_game(proc_args) {
 
   game_context.socket.on("connect_error", (err) => {
     console.error(`connect_error due to ${err.message}`, err);
+  });
+
+  game_context.socket.on("game_error", (data) => {
+    if (is_auth_reject_payload(data)) {
+      schedule_auth_fail_backoff(
+        typeof data === "string"
+          ? data
+          : (data && (data.phrase || data.message || data.reason)) ||
+              "game_error",
+      );
+    }
+  });
+
+  game_context.socket.on("game_log", (data) => {
+    if (is_auth_reject_payload(data)) {
+      schedule_auth_fail_backoff(
+        typeof data === "string"
+          ? data
+          : (data && (data.phrase || data.message || data.reason)) || "game_log",
+      );
+    }
   });
 
   // welcome.version is G.version / Version / game.js?v= — same stamp caracAL caches by.
