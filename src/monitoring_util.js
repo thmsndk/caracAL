@@ -392,150 +392,168 @@ function register_stat_beat(game_context) {
   }
 
   game_context.caracAL.stat_beat = setInterval(() => {
-    const result = { type: "stat_beat" };
+    // Keepalive even when snapshot build fails (e.g. character briefly null mid
+    // change_server / pathing). A thrown interval used to starve the watchdog
+    // while CODE logs still looked healthy — then softkill left the char dead.
+    try {
+      const result = { type: "stat_beat" };
 
-    const time = new Date();
-    loot = loot.filter((item) => {
-      return (
-        time.getTime() - item.time.getTime() <
-        12 * 60 * 60 * 1000 /* 12 hours */
-      );
-    });
+      const time = new Date();
+      loot = loot.filter((item) => {
+        return (
+          time.getTime() - item.time.getTime() <
+          12 * 60 * 60 * 1000 /* 12 hours */
+        );
+      });
 
-    result.loot = loot;
+      result.loot = loot;
 
-    const character = game_context.character;
-
-    const entityProps = [
-      "id",
-      "name",
-      "type",
-      "mtype",
-      "ctype",
-      "rip",
-      "hp",
-      "max_hp",
-      "mp",
-      "max_mp",
-      "level",
-      "xp",
-      "max_xp",
-      "target",
-      "s", // Conditions or Buffs
-      "c", // Channeling actions
-      "q", // Progressed actions
-      "party",
-      "x", // often 0 ? seems to be view specific?
-      "real_x", // world coordinates
-      "y", // often 0 ? seems to be view specific?
-      "real_y", // world coordinates
-      "map",
-    ];
-
-    [
-      ...entityProps,
-      "ping",
-      "gold",
-      "isize",
-      "esize",
-      "goldm",
-      "luckm",
-      "xpm",
-    ].forEach((x) => {
-      if (x === "type") return; // don't override result.type, it's the message type
-      // create_monitor_ui does not have the game_context, so we look up values here
-      const propValue = scqMapGData(x, character[x]);
-      result[x] = propValue;
-    });
-
-    // Inventory + gear snapshots for BWI item widgets (slim iteminstances).
-    result.items = inventoryItemGrid(character);
-    result.favorites = favoriteItemStrip(character, game_context.G);
-    result.gear = slimGearGridFromCharacter(character);
-    result.trades = slimTradeListingsFromCharacter(character);
-    result.trade_slots = countTradeSlots(character);
-    result.hpPot = potSummary(character.items, game_context.G, "hp");
-    result.mpPot = potSummary(character.items, game_context.G, "mp");
-
-    // One-shot Adventure Land icon atlas for BWI clients.
-    if (!game_context.caracAL._bwiAtlasSent && game_context.G) {
-      const atlasApi = loadAtlasHelpers();
-      if (atlasApi && typeof atlasApi.extractAtlas === "function") {
-        result.atlas = atlasApi.extractAtlas(game_context.G);
-        game_context.caracAL._bwiAtlasSent = true;
+      const character = game_context.character;
+      if (!character) {
+        process.send({ type: "stat_beat", keepalive: true });
+        return;
       }
-    }
 
-    if (character.bank) {
-      bank = character.bank;
-      updateBankCount();
-    }
+      const entityProps = [
+        "id",
+        "name",
+        "type",
+        "mtype",
+        "ctype",
+        "rip",
+        "hp",
+        "max_hp",
+        "mp",
+        "max_mp",
+        "level",
+        "xp",
+        "max_xp",
+        "target",
+        "s", // Conditions or Buffs
+        "c", // Channeling actions
+        "q", // Progressed actions
+        "party",
+        "x", // often 0 ? seems to be view specific?
+        "real_x", // world coordinates
+        "y", // often 0 ? seems to be view specific?
+        "real_y", // world coordinates
+        "map",
+      ];
 
-    result.bank_free_count = bank_free_count;
-    result.bank_used_count = bank_used_count;
-    result.bank_total_count = bank_total_count;
-
-    const { pings, server_region, server_identifier, X } = game_context;
-
-    // Official keys are region+identifier (USI). Custom/local servers often use
-    // prefixed keys (SR_USI) while still exposing region/name as US/I.
-    const servers = (X && X.servers) || [];
-    const server =
-      servers.find((x) => x.key === server_region + server_identifier) ||
-      servers.find(
-        (x) => x.region === server_region && x.name === server_identifier,
-      );
-
-    result.pings = pings;
-    result.server_players = server ? server.players : undefined;
-    // server_name is the full server name Europas I
-
-    // party_list
-    result.partyEntities = [];
-    for (const name of game_context.party_list) {
-      // game_context.party only contains location data
-      const entity = game_context.entities[name];
-      const entityResult = { name: name };
-      result.partyEntities.push(entityResult);
-
-      if (!entity) continue;
-
-      ["name", "hp", "max_hp", "mp", "max_mp"].forEach((x) => {
+      [
+        ...entityProps,
+        "ping",
+        "gold",
+        "isize",
+        "esize",
+        "goldm",
+        "luckm",
+        "xpm",
+      ].forEach((x) => {
+        if (x === "type") return; // don't override result.type, it's the message type
         // create_monitor_ui does not have the game_context, so we look up values here
-        // const propValue = scqMapGData(x, targetEntity[x]);
-        const propValue = entity[x];
-        entityResult[x] = propValue ?? entityResult[x];
-      });
-    }
-
-    const targetEntity = game_context.entities[character.target];
-    if (targetEntity) {
-      result.target = {};
-      entityProps.forEach((x) => {
-        // create_monitor_ui does not have the game_context, so we look up values here
-        const propValue = scqMapGData(x, targetEntity[x]);
-        result.target[x] = propValue;
+        const propValue = scqMapGData(x, character[x]);
+        result[x] = propValue;
       });
 
-      result.target.distance = game_context.simple_distance(
-        character,
-        targetEntity,
+      // Inventory + gear snapshots for BWI item widgets (slim iteminstances).
+      result.items = inventoryItemGrid(character);
+      result.favorites = favoriteItemStrip(character, game_context.G);
+      result.gear = slimGearGridFromCharacter(character);
+      result.trades = slimTradeListingsFromCharacter(character);
+      result.trade_slots = countTradeSlots(character);
+      result.hpPot = potSummary(character.items, game_context.G, "hp");
+      result.mpPot = potSummary(character.items, game_context.G, "mp");
+
+      // One-shot Adventure Land icon atlas for BWI clients.
+      if (!game_context.caracAL._bwiAtlasSent && game_context.G) {
+        const atlasApi = loadAtlasHelpers();
+        if (atlasApi && typeof atlasApi.extractAtlas === "function") {
+          result.atlas = atlasApi.extractAtlas(game_context.G);
+          game_context.caracAL._bwiAtlasSent = true;
+        }
+      }
+
+      if (character.bank) {
+        bank = character.bank;
+        updateBankCount();
+      }
+
+      result.bank_free_count = bank_free_count;
+      result.bank_used_count = bank_used_count;
+      result.bank_total_count = bank_total_count;
+
+      const { pings, server_region, server_identifier, X } = game_context;
+
+      // Official keys are region+identifier (USI). Custom/local servers often use
+      // prefixed keys (SR_USI) while still exposing region/name as US/I.
+      const servers = (X && X.servers) || [];
+      const server =
+        servers.find((x) => x.key === server_region + server_identifier) ||
+        servers.find(
+          (x) => x.region === server_region && x.name === server_identifier,
+        );
+
+      result.pings = pings;
+      result.server_players = server ? server.players : undefined;
+      // server_name is the full server name Europas I
+
+      // party_list
+      result.partyEntities = [];
+      const partyList = game_context.party_list || [];
+      for (const name of partyList) {
+        // game_context.party only contains location data
+        const entity = game_context.entities[name];
+        const entityResult = { name: name };
+        result.partyEntities.push(entityResult);
+
+        if (!entity) continue;
+
+        ["name", "hp", "max_hp", "mp", "max_mp"].forEach((x) => {
+          // create_monitor_ui does not have the game_context, so we look up values here
+          // const propValue = scqMapGData(x, targetEntity[x]);
+          const propValue = entity[x];
+          entityResult[x] = propValue ?? entityResult[x];
+        });
+      }
+
+      const targetEntity = game_context.entities[character.target];
+      if (targetEntity) {
+        result.target = {};
+        entityProps.forEach((x) => {
+          // create_monitor_ui does not have the game_context, so we look up values here
+          const propValue = scqMapGData(x, targetEntity[x]);
+          result.target[x] = propValue;
+        });
+
+        result.target.distance = game_context.simple_distance(
+          character,
+          targetEntity,
+        );
+      } else {
+        // target not in entities
+        delete result.target;
+      }
+
+      const chestsWithItems = Object.values(game_context.chests || {}).filter(
+        (chest) => chest.items > 0,
       );
-    } else {
-      // target not in entities
-      delete result.target;
-    }
+      result.chests = chestsWithItems.length;
 
-    const chestsWithItems = Object.values(game_context.chests).filter(
-      (chest) => chest.items > 0,
-    );
-    result.chests = chestsWithItems.length;
-
-    result.current_status = game_context.current_status;
-    if (game_context.caracAL.map_enabled()) {
-      result.mmap = generate_minimap(game_context);
+      result.current_status = game_context.current_status;
+      if (game_context.caracAL.map_enabled()) {
+        result.mmap = generate_minimap(game_context);
+      }
+      process.send(result);
+    } catch (e) {
+      try {
+        process.send({
+          type: "stat_beat",
+          keepalive: true,
+          error: String((e && e.message) || e),
+        });
+      } catch (_) {}
     }
-    process.send(result);
   }, STAT_BEAT_INTERVAL);
 }
 

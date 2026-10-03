@@ -603,7 +603,12 @@ function migrate_old_storage(path, localStorage) {
       }
       if (block.instance) {
         console.log(`redeploying ${name} onto game client ${result.next}`);
+        // Default softkill suppresses exit-handler restart — start explicitly
+        // (same pattern as auth_fail / watchdog).
         await softkill_block(block);
+        start_char(name).catch((e) => {
+          console.error(`failed to start ${name} after game client update`, e);
+        });
       } else if (!block.starting) {
         start_char(name).catch((e) => {
           console.error(`failed to start ${name} after game client update`, e);
@@ -646,7 +651,9 @@ function migrate_old_storage(path, localStorage) {
   my_acc.add_listener(update_siblings_and_acc);
 
   // Redeploy zombie clients that stop heartbeating (hung CODE / blocked stdio /
-  // silent socket death without an exit). Exit handler restarts when enabled.
+  // silent socket death without an exit). Default softkill sets
+  // suppress_auto_restart — must start_char explicitly (same as auth_fail),
+  // otherwise the character stays permanently offline.
   setInterval(() => {
     const now = Date.now();
     for (const [name, block] of Object.entries(character_manage)) {
@@ -661,8 +668,18 @@ function migrate_old_storage(path, localStorage) {
       console.warn(
         `watchdog: ${name} silent for ${Math.round(age / 1000)}s — redeploying`,
       );
+      // Bump so we don't stack softkills while the restart is in flight.
       block.last_stat_beat = now;
-      softkill_block(block);
+      softkill_block(block)
+        .then(() => {
+          if (!block.enabled) {
+            return;
+          }
+          return start_char(name);
+        })
+        .catch((e) => {
+          console.error(`watchdog redeploy failed for ${name}`, e);
+        });
     }
   }, CHAR_WATCHDOG_INTERVAL_MS);
 })().catch((e) => {
