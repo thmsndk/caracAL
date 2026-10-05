@@ -204,6 +204,25 @@ function migrate_old_storage(path, localStorage) {
     src.on("error", () => {});
   }
 
+  // BWI panels: destroy exactly once. softkill can outrun process exit, and a
+  // later do_start_char would otherwise leave the old UI in publisher.botUIs
+  // while exit destroys the *new* monitor via char_block.monitor.
+  function destroy_monitor(monitor) {
+    if (!monitor || monitor._caracalDestroyed) {
+      return;
+    }
+    monitor._caracalDestroyed = true;
+    try {
+      monitor.destroy();
+    } catch (_) {}
+  }
+
+  function detach_and_destroy_monitor(char_block) {
+    const monitor = char_block.monitor;
+    char_block.monitor = null;
+    destroy_monitor(monitor);
+  }
+
   //attempts to softkill child processes
   //by sending an ipc if the client is connected and giving some timeout
   //why not actual SIGTERM? cause windows cant even
@@ -218,6 +237,9 @@ function migrate_old_storage(path, localStorage) {
     char_block.instance = null;
     char_block.connected = false;
     char_block.last_stat_beat = Date.now();
+    // Tear down this process's BWI column before a concurrent restart can
+    // overwrite char_block.monitor (ghost Loading…/0% panels).
+    detach_and_destroy_monitor(char_block);
     if (proc) {
       if (was_connected) {
         console.log("telling client to self-terminate");
@@ -389,12 +411,14 @@ function migrate_old_storage(path, localStorage) {
     pump_child_stdio(result.stderr, process.stderr);
     char_block.instance = result;
     char_block.last_stat_beat = Date.now();
+    // Bind exit cleanup to *this* fork's monitor — never char_block.monitor,
+    // which may already belong to a replacement process after softkill race.
+    let process_monitor = null;
     result.on("exit", () => {
-      if (char_block.monitor) {
-        //close monitor
-        char_block.monitor.destroy();
+      if (char_block.monitor === process_monitor) {
         char_block.monitor = null;
       }
+      destroy_monitor(process_monitor);
       char_block.connected = false;
       if (char_block.instance === result) {
         char_block.instance = null;
@@ -558,12 +582,16 @@ function migrate_old_storage(path, localStorage) {
       }
     });
     if (bwi_instance.publisher) {
-      char_block.monitor = monitoring_util.create_monitor_ui(
+      // Replace any leftover panel from a prior race (should already be null
+      // after softkill detach, but keep the slot single-owner).
+      detach_and_destroy_monitor(char_block);
+      process_monitor = monitoring_util.create_monitor_ui(
         bwi_instance,
         char_name,
         char_block,
         cfg.web_app.enable_minimap,
       );
+      char_block.monitor = process_monitor;
     }
 
     return result;
