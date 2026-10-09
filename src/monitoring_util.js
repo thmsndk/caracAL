@@ -599,10 +599,16 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
 
   child_block.instance.on("message", (m) => {
     if (m.type == "stat_beat") {
-      if (m.atlas && bwi.publisher && typeof bwi.publisher.setAtlas === "function") {
+      if (
+        m.atlas &&
+        bwi.publisher &&
+        typeof bwi.publisher.setAtlas === "function" &&
+        !bwi.publisher.atlas
+      ) {
+        // First character to extract wins; later chars skip rebroadcast.
         bwi.publisher.setAtlas(m.atlas);
-        delete m.atlas;
       }
+      if (m.atlas) delete m.atlas;
       gold_histo.push(m.gold);
       gold_histo = gold_histo.slice(-100);
 
