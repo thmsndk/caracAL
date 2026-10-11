@@ -14,6 +14,7 @@ try {
   };
 }
 const io = require("socket.io-client");
+const { verified_io } = require("./verified_io");
 const fs = require("fs").promises;
 const { JSDOM } = require("jsdom");
 const node_query = require("jquery");
@@ -222,7 +223,7 @@ async function make_game(proc_args) {
   console.log("constructing game instance");
   console.debug("source files:\n%s", game_sources);
   const game_context = make_context(null, proc_args.base_url);
-  game_context.io = io;
+  game_context.io = verified_io(io); // (the game asks Node's client not to verify the server's certificate)
   game_context.bowser = {};
   await ev_files(game_sources, game_context);
   // JSDOM+vm breaks AL clone()'s instanceof checks — see docs/jsdom-vm-realm-clone.md
