@@ -29,6 +29,7 @@ const {
   shouldRefreshClientForWelcome,
 } = require("./realm_rtt");
 const { apply_realm_safe_clone } = require("./realm_safe_clone");
+const { apply_draw_guard } = require("./draw_guard");
 
 process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);
@@ -227,6 +228,8 @@ async function make_game(proc_args) {
   await ev_files(game_sources, game_context);
   // JSDOM+vm breaks AL clone()'s instanceof checks — see docs/jsdom-vm-realm-clone.md
   apply_realm_safe_clone(game_context);
+  // an exception in draw() ends its frame loop: 15 s heartbeat frames until a reload (src/draw_guard.js)
+  apply_draw_guard(game_context);
   game_context.VERSION = "" + game_context.G.version;
   game_context.Local = "";
   game_context.Dev = "";
