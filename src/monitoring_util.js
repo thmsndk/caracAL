@@ -594,17 +594,17 @@ function register_stat_beat(game_context) {
           if (dt >= 0.5 && dropped > 0) slopeDps = dropped / dt;
         }
 
-        // Personal DPS from our hits only. TTK prefers personal; falls back to
-        // observed HP slope so the bar still shows a kill clock in party fights.
-        result.targetDps = personalDps;
+        // Personal = our hits. Total = observed HP drop (everyone). Actual TTK
+        // always uses total so the bar matches real time-to-kill.
         result.targetDpsPersonal = personalDps;
-        const ttkDps = personalDps != null ? personalDps : slopeDps;
+        result.targetDpsTotal = slopeDps;
+        result.targetDps = personalDps;
         if (
-          ttkDps != null &&
-          ttkDps > 0 &&
+          slopeDps != null &&
+          slopeDps > 0 &&
           typeof targetEntity.hp === "number"
         ) {
-          result.targetTtk = targetEntity.hp / ttkDps;
+          result.targetTtk = targetEntity.hp / slopeDps;
         } else {
           result.targetTtk = null;
         }
@@ -613,6 +613,7 @@ function register_stat_beat(game_context) {
         delete result.target;
         result.targetDps = null;
         result.targetDpsPersonal = null;
+        result.targetDpsTotal = null;
         result.targetTtk = null;
         targetHpSampleId = null;
         targetHpSamples = [];
@@ -1127,7 +1128,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       ),
       gold: {
         left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
-        middle: formatMultipliers(last_beat),
+        middle: "",
         right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
       },
       favorites: last_beat.favorites || [],
@@ -1151,6 +1152,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       { name: "header", type: "leftMiddleRightText" },
       { name: "header2", type: "leftMiddleRightText" },
       { name: "header3", type: "leftMiddleRightText" },
+      { name: "dps", type: "leftMiddleRightText" },
       {
         name: "health",
         type: "labelProgressBar",
@@ -1176,6 +1178,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       header: { left: "", middle: "No Target", right: "" },
       header2: { left: "", middle: " ", right: "" },
       header3: { left: "", middle: "", right: "" },
+      dps: { left: "", middle: "", right: "" },
       health: [100, " ", ""],
       mana: [100, " "],
       // Always send [] so BWI clears lingering buff chips on target swap.
@@ -1202,7 +1205,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     const focusIsParty = !entity.rip && focusName && partyNames.has(focusName);
 
     const health = quick_bar_val(entity.hp, entity.max_hp, true);
-    health.push(formatTargetCombatCenter(last_beat));
+    health.push(formatTargetTtkCenter(last_beat));
 
     return {
       header: {
@@ -1224,6 +1227,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: "",
         right: `${entity.real_x.toFixed()}, ${entity.real_y.toFixed()}`,
       },
+      dps: formatTargetDpsRow(last_beat),
       health,
       mana: quick_bar_val(entity.mp, entity.max_mp, true),
       timers: scqTimers(entity.s, entity.c, entity.q),
@@ -1545,40 +1549,33 @@ function minimapStyles() {
   return styles;
 }
 
-/**
- * Center overlay for the target health bar: personal DPS + TTK.
- * DPS is only shown from our own hits (never party/slope "shared" DPS).
- */
-function formatTargetCombatCenter(beat) {
+/** Health-bar center: actual TTK from observed HP drop (party total). */
+function formatTargetTtkCenter(beat) {
   if (!beat) return "";
-  const parts = [];
-  const personal = beat.targetDpsPersonal;
-  if (typeof personal === "number" && personal > 0) {
-    parts.push(humanize_int(personal, 1) + " dps");
-  }
   const ttk = beat.targetTtk;
-  if (typeof ttk === "number" && ttk > 0 && Number.isFinite(ttk)) {
-    parts.push(
-      prettyMilliseconds(ttk * 1000, { unitCount: 2 }) + " ttk",
-    );
+  if (typeof ttk !== "number" || !(ttk > 0) || !Number.isFinite(ttk)) {
+    return "";
   }
-  return parts.join(" · ");
+  return prettyMilliseconds(ttk * 1000, { unitCount: 2 }) + " ttk";
 }
 
-/** Compact gold/luck/xp multipliers when present on the beat. */
-function formatMultipliers(beat) {
-  if (!beat) return "";
-  const parts = [];
-  if (typeof beat.goldm === "number" && beat.goldm !== 1) {
-    parts.push(`G×${beat.goldm.toFixed(2)}`);
-  }
-  if (typeof beat.luckm === "number" && beat.luckm !== 1) {
-    parts.push(`L×${beat.luckm.toFixed(2)}`);
-  }
-  if (typeof beat.xpm === "number" && beat.xpm !== 1) {
-    parts.push(`X×${beat.xpm.toFixed(2)}`);
-  }
-  return parts.join(" ");
+/** Row above target HP: personal left, total (observed) right. */
+function formatTargetDpsRow(beat) {
+  const empty = { left: "", middle: "", right: "" };
+  if (!beat) return empty;
+  const personal = beat.targetDpsPersonal;
+  const total = beat.targetDpsTotal;
+  return {
+    left:
+      typeof personal === "number" && personal > 0
+        ? `you ${humanize_int(personal, 1)}`
+        : "",
+    middle: "",
+    right:
+      typeof total === "number" && total > 0
+        ? `all ${humanize_int(total, 1)}`
+        : "",
+  };
 }
 
 /**
