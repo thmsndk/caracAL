@@ -326,6 +326,25 @@ function register_stat_beat(game_context) {
   }
 
   let loot = [];
+  /** Rolling personal hits for target DPS / TTK ({ t, dmg, id }). */
+  let hitLog = [];
+  /** HP samples for observed TTK when hit DPS is thin. */
+  let targetHpSamples = [];
+  let targetHpSampleId = null;
+  /** Self trail in world coords for BWI minimap T layer. */
+  let mmapTrailWorld = [];
+
+  game_context.character.on("hit", function (data) {
+    if (!data || data.damage == null) return;
+    if (data.hid !== game_context.character.name) return;
+    hitLog.push({
+      t: Date.now(),
+      dmg: data.damage,
+      id: data.id,
+    });
+    if (hitLog.length > 200) hitLog = hitLog.slice(-120);
+  });
+
   game_context.character.on("loot", function (data) {
     if (!data.items) return;
     const itemsByKey = {};
@@ -518,6 +537,8 @@ function register_stat_beat(game_context) {
       }
 
       const targetEntity = game_context.entities[character.target];
+      const nowBeat = Date.now();
+      const DPS_WINDOW_MS = 10_000;
       if (targetEntity) {
         result.target = {};
         entityProps.forEach((x) => {
@@ -530,9 +551,70 @@ function register_stat_beat(game_context) {
           character,
           targetEntity,
         );
+
+        const tid = targetEntity.id;
+        hitLog = hitLog.filter(
+          (h) => h.id === tid && nowBeat - h.t <= DPS_WINDOW_MS,
+        );
+        let hitDmg = 0;
+        let hitOldest = null;
+        for (let i = 0; i < hitLog.length; i++) {
+          hitDmg += hitLog[i].dmg;
+          if (hitOldest == null || hitLog[i].t < hitOldest) {
+            hitOldest = hitLog[i].t;
+          }
+        }
+        let personalDps = null;
+        if (hitDmg > 0 && hitOldest != null) {
+          const elapsedSec = Math.max(0.5, (nowBeat - hitOldest) / 1000);
+          personalDps = hitDmg / elapsedSec;
+        }
+
+        if (targetHpSampleId !== tid) {
+          targetHpSampleId = tid;
+          targetHpSamples = [];
+        }
+        const lastHp = targetHpSamples[targetHpSamples.length - 1];
+        if (!lastHp || nowBeat - lastHp.t >= 250) {
+          targetHpSamples.push({ t: nowBeat, hp: targetEntity.hp });
+          if (targetHpSamples.length > 24) {
+            targetHpSamples = targetHpSamples.slice(-24);
+          }
+        } else {
+          lastHp.hp = targetEntity.hp;
+          lastHp.t = nowBeat;
+        }
+
+        let slopeDps = null;
+        if (targetHpSamples.length >= 2) {
+          const first = targetHpSamples[0];
+          const last = targetHpSamples[targetHpSamples.length - 1];
+          const dt = (last.t - first.t) / 1000;
+          const dropped = first.hp - last.hp;
+          if (dt >= 0.5 && dropped > 0) slopeDps = dropped / dt;
+        }
+
+        const dps =
+          personalDps != null
+            ? personalDps
+            : slopeDps != null
+              ? slopeDps
+              : null;
+        result.targetDps = dps;
+        result.targetDpsPersonal = personalDps;
+        if (dps != null && dps > 0 && typeof targetEntity.hp === "number") {
+          result.targetTtk = targetEntity.hp / dps;
+        } else {
+          result.targetTtk = null;
+        }
       } else {
-        // target not in entities
+        // target not in entities — clear combat stats so UI can wipe chips
         delete result.target;
+        result.targetDps = null;
+        result.targetDpsPersonal = null;
+        result.targetTtk = null;
+        targetHpSampleId = null;
+        targetHpSamples = [];
       }
 
       const chestsWithItems = Object.values(game_context.chests || {}).filter(
@@ -541,8 +623,24 @@ function register_stat_beat(game_context) {
       result.chests = chestsWithItems.length;
 
       result.current_status = game_context.current_status;
+
+      // World-space breadcrumbs for minimap trail layer.
+      const tx = character.real_x;
+      const ty = character.real_y;
+      const lastTrail = mmapTrailWorld[mmapTrailWorld.length - 1];
+      if (
+        !lastTrail ||
+        Math.abs(lastTrail[0] - tx) > 4 ||
+        Math.abs(lastTrail[1] - ty) > 4
+      ) {
+        mmapTrailWorld.push([tx, ty]);
+        if (mmapTrailWorld.length > 48) {
+          mmapTrailWorld = mmapTrailWorld.slice(-40);
+        }
+      }
+
       if (game_context.caracAL.map_enabled()) {
-        result.mmap = generate_minimap(game_context);
+        result.mmap = generate_minimap(game_context, mmapTrailWorld);
       }
       process.send(result);
     } catch (e) {
@@ -566,10 +664,10 @@ function register_stat_beat(game_context) {
  * @returns
  */
 function create_monitor_ui(bwi, char_name, child_block, enable_map) {
-  // Future BWI enhancements: loot pie chart and loot/h, DPS/HPS, death stats,
+  // Future BWI enhancements: loot pie chart and loot/h, death stats,
   // timer bar colors by debuff type, revive priest name in timer rightText,
-  // target's-target for party assists, ping gradient chart, goldm/luckm/xpm display,
-  // movement speed and aggro counts, bot-forwarded custom timers, server events.
+  // ping gradient chart, movement speed and aggro counts,
+  // bot-forwarded custom timers, server events.
 
   let xp_histo = [];
   let xp_ph = 0;
@@ -581,6 +679,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   let sit_anchor = null;
   const SIT_EPS = 8;
   const SIT_SHOW_MS = 10_000;
+  const SIT_WARN_MS = 30_000;
+  const SIT_ALERT_MS = 60_000;
 
   function sitDurationMs(beat, now) {
     const x = beat.real_x;
@@ -880,14 +980,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         height: mmap_h,
         scale: mmap_scale,
         smoothMs: STAT_BEAT_INTERVAL,
-        styles: {
-          wall: { stroke: "rgba(226,232,240,0.92)", lineWidth: 1.35 },
-          self: { shape: "cross", fill: "#32b1f5" },
-          foe: { shape: "cross", fill: "#b14f1d" },
-          alert: { shape: "cross", fill: "#c10037" },
-          other: { shape: "cross", fill: "#284af4" },
-          focus: { shape: "ring", stroke: "#c10037", lineWidth: 1 },
-        },
+        styles: minimapStyles(),
       },
     });
   }
@@ -898,6 +991,10 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     const timers = [];
     const sampledAt = last_beat_at;
     const now = Date.now();
+    // Beat may omit empty s/c/q (undefined) — never for-in undefined.
+    s = s || {};
+    c = c || {};
+    q = q || {};
 
     for (const conditionKey in s) {
       const condition = s[conditionKey];
@@ -958,6 +1055,12 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       };
     }
 
+    const sitMs = sitDurationMs(last_beat, Date.now());
+    let sitMiddleColor = "";
+    if (sitMs >= SIT_ALERT_MS) sitMiddleColor = "#ef4444";
+    else if (sitMs >= SIT_WARN_MS) sitMiddleColor = "#f97316";
+    else if (sitMs >= SIT_SHOW_MS) sitMiddleColor = "#f59e0b";
+
     const data = {
       header: {
         left: char_name,
@@ -970,16 +1073,15 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       },
       header2: {
         left: last_beat.map,
-        middle: (() => {
-          const sitMs = sitDurationMs(last_beat, Date.now());
-          return sitMs >= SIT_SHOW_MS
+        middle:
+          sitMs >= SIT_SHOW_MS
             ? `sit ${prettyMilliseconds(sitMs, { unitCount: 2 })}`
-            : "";
-        })(),
+            : "",
         right: `${last_beat.real_x.toFixed()}, ${last_beat.real_y.toFixed()}`,
         options: {
           beatAt: last_beat_at,
           staleAfterSec: 2,
+          middleColor: sitMiddleColor,
         },
       },
       health: quick_bar_val(last_beat.hp, last_beat.max_hp, true),
@@ -1024,7 +1126,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       ),
       gold: {
         left: `Gold: ${humanize_int(last_beat.gold, 1)}`,
-        middle: "",
+        middle: formatMultipliers(last_beat),
         right: `${humanize_int(val_ph(gold_histo), 1)} G/h`,
       },
       favorites: last_beat.favorites || [],
@@ -1034,7 +1136,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       timers: scqTimers(last_beat.s, last_beat.c, last_beat.q),
     };
     if (enable_map) {
-      data.minimap = last_beat.mmap;
+      data.minimap = withSitMinimapMarker(
+        last_beat.mmap,
+        sitMs,
+        SIT_SHOW_MS,
+      );
     }
     return data;
   });
@@ -1044,6 +1150,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       { name: "header", type: "leftMiddleRightText" },
       { name: "header2", type: "leftMiddleRightText" },
       { name: "header3", type: "leftMiddleRightText" },
+      { name: "combat", type: "leftMiddleRightText" },
       {
         name: "health",
         type: "labelProgressBar",
@@ -1065,9 +1172,20 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   );
 
   targetBotUI.setDataSource(() => {
+    const emptyTarget = {
+      header: { left: "", middle: "No Target", right: "" },
+      header2: { left: "", middle: " ", right: "" },
+      header3: { left: "", middle: "", right: "" },
+      combat: { left: "", middle: "", right: "" },
+      health: [100, " "],
+      mana: [100, " "],
+      // Always send [] so BWI clears lingering buff chips on target swap.
+      timers: [],
+    };
+
     if (!last_beat) {
       return {
-        // [characterName] [status] [level]
+        ...emptyTarget,
         header: { left: "", middle: "Loading...", right: "" },
       };
     }
@@ -1075,19 +1193,34 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     const entity = last_beat.target;
 
     if (!entity) {
-      return {
-        header: { left: "", middle: "No Target", right: "" },
-        header2: { left: "", middle: " ", right: "" },
-        health: [100, " "],
-        mana: [100, " "],
-      };
+      return emptyTarget;
+    }
+
+    const partyNames = new Set(
+      (last_beat.partyEntities || []).map((p) => p.name),
+    );
+    const focusName = entity.rip ? "💀" : entity.target ?? "";
+    const focusIsParty = !entity.rip && focusName && partyNames.has(focusName);
+
+    const dps = last_beat.targetDps;
+    const ttk = last_beat.targetTtk;
+    const personal = last_beat.targetDpsPersonal;
+    let combatLeft = "";
+    let combatRight = "";
+    if (typeof dps === "number" && dps > 0) {
+      const tag = personal != null ? "DPS" : "DPS~";
+      combatLeft = `${tag} ${humanize_int(dps, 1)}`;
+    }
+    if (typeof ttk === "number" && ttk > 0 && Number.isFinite(ttk)) {
+      combatRight = `TTK ${prettyMilliseconds(ttk * 1000, { unitCount: 2 })}`;
     }
 
     return {
       header: {
         left: entity.name,
-        middle: entity.rip ? "💀" : entity.target ?? "",
+        middle: focusName,
         right: entity.level,
+        options: focusIsParty ? { middleColor: "#22c55e" } : {},
       },
       header2: {
         left: entity.mtype ?? "",
@@ -1101,6 +1234,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         left: entity.map,
         middle: "",
         right: `${entity.real_x.toFixed()}, ${entity.real_y.toFixed()}`,
+      },
+      combat: {
+        left: combatLeft,
+        middle: "",
+        right: combatRight,
       },
       health: quick_bar_val(entity.hp, entity.max_hp, true),
       mana: quick_bar_val(entity.mp, entity.max_mp, true),
@@ -1248,13 +1386,16 @@ function wallsForCharacter(name) {
  * Build a BWI-generic minimap payload (pixel-space lines + markers).
  * Window matches character.vision (AL half-extents, default 700×500).
  * Geometry projection must stay identical to BWI's minimapGeometry helper.
- * @returns {{ lines: Array, markers: Array, width: number, height: number, scale: number, vision: number[] }}
+ * @param {*} game_context
+ * @param {Array<[number, number]>} [trailWorld] recent self positions in world space
+ * @returns {{ lines: Array, markers: Array, trail?: Array, width: number, height: number, scale: number, vision: number[] }}
  */
-function generate_minimap(game_context) {
+function generate_minimap(game_context, trailWorld) {
   if (!MINIMAP_AVAILABLE || !game_context?.character) {
     return {
       lines: [],
       markers: [],
+      trail: [],
       title: game_context?.character?.name || "",
       map: game_context?.character?.map || "",
       origin: [0, 0],
@@ -1275,6 +1416,7 @@ function generate_minimap(game_context) {
     height: view.height,
     scale: view.scale,
   };
+  const partySet = new Set(game_context.party_list || []);
 
   const lines = wallsForCharacter(g_char.name || "?")(
     game_context.GEO,
@@ -1315,6 +1457,16 @@ function generate_minimap(game_context) {
     markers.push(marker);
   }
 
+  function characterStyle(ent) {
+    const ctype = ent.ctype;
+    const id = ent.id || ent.name;
+    const inParty = id && partySet.has(id);
+    if (ctype && CLASS_COLOR[ctype]) {
+      return inParty ? "party:" + ctype : ctype;
+    }
+    return inParty ? "party" : "other";
+  }
+
   for (let ent_id in game_context.entities) {
     const ent = game_context.entities[ent_id];
     if (ent.npc || ent.dead) {
@@ -1324,7 +1476,7 @@ function generate_minimap(game_context) {
     if (ent.mtype) {
       style = (ent.target == g_char.name && "alert") || "foe";
     } else {
-      style = "other";
+      style = characterStyle(ent);
     }
     push_marker(ent, style);
   }
@@ -1336,9 +1488,28 @@ function generate_minimap(game_context) {
   }
   push_marker(g_char, "self");
 
+  const trail = [];
+  if (Array.isArray(trailWorld)) {
+    for (let i = 0; i < trailWorld.length; i++) {
+      const p = trailWorld[i];
+      if (!p) continue;
+      const [r_x, r_y] = projectMinimapPoint(p[0], p[1], c_x, c_y, opts);
+      if (
+        r_x < -2 ||
+        r_x >= view.width + 2 ||
+        r_y < -2 ||
+        r_y >= view.height + 2
+      ) {
+        continue;
+      }
+      trail.push([r_x, r_y]);
+    }
+  }
+
   return {
     lines,
     markers,
+    trail,
     title: g_char.name || "",
     map: g_char.map || "",
     origin: [c_x, c_y],
@@ -1360,6 +1531,66 @@ const CLASS_COLOR = {
   paladin: "#a3b4b9",
   rogue: "#44b75c",
 };
+
+/** Minimap style map: class colors + party dots vs stranger crosses. */
+function minimapStyles() {
+  const styles = {
+    wall: { stroke: "rgba(226,232,240,0.92)", lineWidth: 1.35 },
+    self: { shape: "cross", fill: "#32b1f5" },
+    sit: { shape: "ring", stroke: "#f59e0b", lineWidth: 1.75 },
+    foe: { shape: "cross", fill: "#b14f1d" },
+    alert: { shape: "cross", fill: "#c10037" },
+    other: { shape: "cross", fill: "#284af4" },
+    party: { shape: "dot", fill: "#1bd545" },
+    focus: { shape: "ring", stroke: "#c10037", lineWidth: 1 },
+    trail: { stroke: "rgba(56,189,248,0.55)", lineWidth: 1.25 },
+  };
+  for (const ctype of Object.keys(CLASS_COLOR)) {
+    const fill = CLASS_COLOR[ctype];
+    styles[ctype] = { shape: "cross", fill };
+    styles["party:" + ctype] = { shape: "dot", fill };
+  }
+  return styles;
+}
+
+/** Compact gold/luck/xp multipliers when present on the beat. */
+function formatMultipliers(beat) {
+  if (!beat) return "";
+  const parts = [];
+  if (typeof beat.goldm === "number" && beat.goldm !== 1) {
+    parts.push(`G×${beat.goldm.toFixed(2)}`);
+  }
+  if (typeof beat.luckm === "number" && beat.luckm !== 1) {
+    parts.push(`L×${beat.luckm.toFixed(2)}`);
+  }
+  if (typeof beat.xpm === "number" && beat.xpm !== 1) {
+    parts.push(`X×${beat.xpm.toFixed(2)}`);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Shallow-copy mmap and add a sit ring on self when parked long enough.
+ * Avoid mutating the shared beat payload (minimapEquality keeps by reference).
+ */
+function withSitMinimapMarker(mmap, sitMs, sitShowMs) {
+  if (!mmap) return mmap;
+  if (!(sitMs >= sitShowMs)) return mmap;
+  const markers = Array.isArray(mmap.markers) ? mmap.markers.slice() : [];
+  let selfX = null;
+  let selfY = null;
+  for (let i = 0; i < markers.length; i++) {
+    const m = markers[i];
+    if (m && m[2] === "self") {
+      selfX = m[0];
+      selfY = m[1];
+      break;
+    }
+  }
+  if (selfX == null) return mmap;
+  markers.push([selfX, selfY, "sit"]);
+  return { ...mmap, markers };
+}
 
 // https://stackoverflow.com/a/74456486
 function timeAgo(date) {
