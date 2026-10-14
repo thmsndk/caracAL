@@ -1,5 +1,10 @@
 const prettyMilliseconds = require("pretty-ms");
 const { STAT_BEAT_INTERVAL } = require("./CONSTANTS.js");
+const {
+  collectVisionSceneStats,
+  formatVisionSceneRow,
+  normalizeOutgoingHit,
+} = require("./monitoring_scene.js");
 const { max, min, abs, round, floor } = Math;
 
 function loadAtlasHelpers() {
@@ -334,16 +339,30 @@ function register_stat_beat(game_context) {
   /** Self trail in world coords for BWI minimap T layer. */
   let mmapTrailWorld = [];
 
-  game_context.character.on("hit", function (data) {
-    if (!data || data.damage == null) return;
-    if (data.hid !== game_context.character.name) return;
-    hitLog.push({
-      t: Date.now(),
-      dmg: data.damage,
-      id: data.id,
-    });
+  function pushPersonalHit(tid, dmg) {
+    hitLog.push({ t: Date.now(), dmg, id: String(tid) });
     if (hitLog.length > 200) hitLog = hitLog.slice(-120);
-  });
+  }
+
+  function onOutgoingHit(data) {
+    const char = game_context.character;
+    const norm = normalizeOutgoingHit(data, char && char.name, char && char.id);
+    if (!norm) return;
+    pushPersonalHit(norm.tid, norm.damage);
+  }
+
+  // character.on("hit") is *incoming* damage — never fills "you" DPS.
+  // target_hit = our attacks; socket hit is the same stream dps-meter uses.
+  if (typeof game_context.character.on === "function") {
+    game_context.character.on("target_hit", onOutgoingHit);
+  }
+  const hitSocket =
+    game_context.socket ||
+    (game_context.parent && game_context.parent.socket) ||
+    null;
+  if (hitSocket && typeof hitSocket.on === "function") {
+    hitSocket.on("hit", onOutgoingHit);
+  }
 
   game_context.character.on("loot", function (data) {
     if (!data.items) return;
@@ -552,9 +571,9 @@ function register_stat_beat(game_context) {
           targetEntity,
         );
 
-        const tid = targetEntity.id;
+        const tid = String(targetEntity.id);
         hitLog = hitLog.filter(
-          (h) => h.id === tid && nowBeat - h.t <= DPS_WINDOW_MS,
+          (h) => String(h.id) === tid && nowBeat - h.t <= DPS_WINDOW_MS,
         );
         let hitDmg = 0;
         let hitOldest = null;
@@ -640,6 +659,13 @@ function register_stat_beat(game_context) {
           mmapTrailWorld = mmapTrailWorld.slice(-40);
         }
       }
+
+      result.mmapInfo = formatVisionSceneRow(
+        collectVisionSceneStats({
+          entities: game_context.entities,
+          self: character,
+        }),
+      );
 
       if (game_context.caracAL.map_enabled()) {
         result.mmap = generate_minimap(game_context, mmapTrailWorld);
@@ -972,19 +998,25 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
   ];
 
   // Structured minimap payload (lines + markers) rendered by BWI canvas widget.
+  // mmapInfo sits directly under the map: players/parties + aggro counts.
   if (enable_map) {
-    characterSchema.splice(2, 0, {
-      name: "minimap",
-      type: "minimap",
-      label: "Map",
-      options: {
-        width: mmap_w,
-        height: mmap_h,
-        scale: mmap_scale,
-        smoothMs: STAT_BEAT_INTERVAL,
-        styles: minimapStyles(),
+    characterSchema.splice(
+      2,
+      0,
+      {
+        name: "minimap",
+        type: "minimap",
+        label: "Map",
+        options: {
+          width: mmap_w,
+          height: mmap_h,
+          scale: mmap_scale,
+          smoothMs: STAT_BEAT_INTERVAL,
+          styles: minimapStyles(),
+        },
       },
-    });
+      { name: "mmapInfo", type: "leftMiddleRightText" },
+    );
   }
 
   let characterBotUI = ui.createSubBotUI(characterSchema, "character");
@@ -1143,6 +1175,11 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         sitMs,
         SIT_SHOW_MS,
       );
+      data.mmapInfo = last_beat.mmapInfo || {
+        left: "",
+        middle: "",
+        right: "",
+      };
     }
     return data;
   });
