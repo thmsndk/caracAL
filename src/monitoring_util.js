@@ -594,16 +594,17 @@ function register_stat_beat(game_context) {
           if (dt >= 0.5 && dropped > 0) slopeDps = dropped / dt;
         }
 
-        const dps =
-          personalDps != null
-            ? personalDps
-            : slopeDps != null
-              ? slopeDps
-              : null;
-        result.targetDps = dps;
+        // Personal DPS from our hits only. TTK prefers personal; falls back to
+        // observed HP slope so the bar still shows a kill clock in party fights.
+        result.targetDps = personalDps;
         result.targetDpsPersonal = personalDps;
-        if (dps != null && dps > 0 && typeof targetEntity.hp === "number") {
-          result.targetTtk = targetEntity.hp / dps;
+        const ttkDps = personalDps != null ? personalDps : slopeDps;
+        if (
+          ttkDps != null &&
+          ttkDps > 0 &&
+          typeof targetEntity.hp === "number"
+        ) {
+          result.targetTtk = targetEntity.hp / ttkDps;
         } else {
           result.targetTtk = null;
         }
@@ -1150,7 +1151,6 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       { name: "header", type: "leftMiddleRightText" },
       { name: "header2", type: "leftMiddleRightText" },
       { name: "header3", type: "leftMiddleRightText" },
-      { name: "combat", type: "leftMiddleRightText" },
       {
         name: "health",
         type: "labelProgressBar",
@@ -1176,8 +1176,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
       header: { left: "", middle: "No Target", right: "" },
       header2: { left: "", middle: " ", right: "" },
       header3: { left: "", middle: "", right: "" },
-      combat: { left: "", middle: "", right: "" },
-      health: [100, " "],
+      health: [100, " ", ""],
       mana: [100, " "],
       // Always send [] so BWI clears lingering buff chips on target swap.
       timers: [],
@@ -1202,18 +1201,8 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
     const focusName = entity.rip ? "💀" : entity.target ?? "";
     const focusIsParty = !entity.rip && focusName && partyNames.has(focusName);
 
-    const dps = last_beat.targetDps;
-    const ttk = last_beat.targetTtk;
-    const personal = last_beat.targetDpsPersonal;
-    let combatLeft = "";
-    let combatRight = "";
-    if (typeof dps === "number" && dps > 0) {
-      const tag = personal != null ? "DPS" : "DPS~";
-      combatLeft = `${tag} ${humanize_int(dps, 1)}`;
-    }
-    if (typeof ttk === "number" && ttk > 0 && Number.isFinite(ttk)) {
-      combatRight = `TTK ${prettyMilliseconds(ttk * 1000, { unitCount: 2 })}`;
-    }
+    const health = quick_bar_val(entity.hp, entity.max_hp, true);
+    health.push(formatTargetCombatCenter(last_beat));
 
     return {
       header: {
@@ -1235,12 +1224,7 @@ function create_monitor_ui(bwi, char_name, child_block, enable_map) {
         middle: "",
         right: `${entity.real_x.toFixed()}, ${entity.real_y.toFixed()}`,
       },
-      combat: {
-        left: combatLeft,
-        middle: "",
-        right: combatRight,
-      },
-      health: quick_bar_val(entity.hp, entity.max_hp, true),
+      health,
       mana: quick_bar_val(entity.mp, entity.max_mp, true),
       timers: scqTimers(entity.s, entity.c, entity.q),
     };
@@ -1467,6 +1451,9 @@ function generate_minimap(game_context, trailWorld) {
     return inParty ? "party" : "other";
   }
 
+  // Players stacked on our tile read as a speck glued to the cyan self cross.
+  const SELF_OVERLAP_R2 = 14 * 14;
+
   for (let ent_id in game_context.entities) {
     const ent = game_context.entities[ent_id];
     if (ent.npc || ent.dead) {
@@ -1476,6 +1463,11 @@ function generate_minimap(game_context, trailWorld) {
     if (ent.mtype) {
       style = (ent.target == g_char.name && "alert") || "foe";
     } else {
+      const dx = (ent.real_x || 0) - c_x;
+      const dy = (ent.real_y || 0) - c_y;
+      if (dx * dx + dy * dy < SELF_OVERLAP_R2) {
+        continue;
+      }
       style = characterStyle(ent);
     }
     push_marker(ent, style);
@@ -1551,6 +1543,26 @@ function minimapStyles() {
     styles["party:" + ctype] = { shape: "dot", fill };
   }
   return styles;
+}
+
+/**
+ * Center overlay for the target health bar: personal DPS + TTK.
+ * DPS is only shown from our own hits (never party/slope "shared" DPS).
+ */
+function formatTargetCombatCenter(beat) {
+  if (!beat) return "";
+  const parts = [];
+  const personal = beat.targetDpsPersonal;
+  if (typeof personal === "number" && personal > 0) {
+    parts.push(humanize_int(personal, 1) + " dps");
+  }
+  const ttk = beat.targetTtk;
+  if (typeof ttk === "number" && ttk > 0 && Number.isFinite(ttk)) {
+    parts.push(
+      prettyMilliseconds(ttk * 1000, { unitCount: 2 }) + " ttk",
+    );
+  }
+  return parts.join(" · ");
 }
 
 /** Compact gold/luck/xp multipliers when present on the beat. */
