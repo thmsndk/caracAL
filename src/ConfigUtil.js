@@ -3,6 +3,10 @@ var inquirer = require("inquirer");
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
 const account_info = require("../account_info");
+const {
+  is_tls_cert_error,
+  tls_cert_help_message,
+} = require("./verified_io");
 const fs = require("fs").promises;
 const { constants } = require("fs");
 
@@ -96,7 +100,7 @@ async function prompt_server() {
       type: "input",
       name: "server_url",
       message:
-        "Type in the url of the server, for example http://localhost:8083\n" +
+        "Type in the url of the server, for example http://localhost:8090 or https://play.al.local\n" +
         "Make sure you trust the server you are connecting to",
       when(answers) {
         return !answers.use_official_server;
@@ -106,15 +110,49 @@ async function prompt_server() {
   ]);
 
   if (use_official_server) {
-    return "https://adventure.land";
-  } else {
-    if (server_url.startsWith("http://")) {
+    return { base_url: "https://adventure.land", verify_game_cert: true };
+  }
+
+  let verify_game_cert = true;
+  if (server_url.startsWith("http://")) {
+    console.warn(
+      "HTTP custom server: sockets use ws:// (matched to base_url). HTTPS still preferred for public hosts.",
+    );
+  } else if (server_url.startsWith("https://")) {
+    const { verify } = await inquirer.prompt([
+      {
+        type: "list",
+        name: "verify",
+        message:
+          "Verify the game server's TLS certificate? (Yes matches a browser.)",
+        choices: [
+          {
+            value: true,
+            name: "Yes — verify (recommended; mkcert: node --use-system-ca or NODE_EXTRA_CA_CERTS)",
+          },
+          {
+            value: false,
+            name: "No — allow untrusted certificates (private/self-signed HTTPS only)",
+          },
+        ],
+      },
+    ]);
+    verify_game_cert = verify;
+    if (verify_game_cert) {
+      console.log(
+        "Tip: local mkcert HTTPS → `node --use-system-ca main.js …` or NODE_EXTRA_CA_CERTS=`mkcert -CAROOT`/rootCA.pem. Let's Encrypt / ACME needs nothing extra.",
+      );
+    } else {
       console.warn(
-        "HTTP custom server: sockets use ws:// (matched to base_url). HTTPS still preferred for public hosts.",
+        "verify_game_cert: false — game sockets will not verify TLS. Prefer a trusted CA when you can.",
       );
     }
-    return server_url;
+  } else {
+    console.warn(
+      "Custom server url should start with http:// or https:// — continuing anyway.",
+    );
   }
+  return { base_url: server_url, verify_game_cert };
 }
 
 async function prompt_chars(all_chars) {
@@ -150,7 +188,7 @@ Select 'Deploy' when you are done choosing`,
 
 async function prompt_new_cfg(configPath) {
   // prompt official server? or community server?
-  const base_url = await prompt_server();
+  const { base_url, verify_game_cert } = await prompt_server();
   let session = null;
   while (!session) {
     console.log("please enter your credentials");
@@ -167,9 +205,20 @@ async function prompt_new_cfg(configPath) {
         mask: "*",
       },
     ]);
-    session = await make_auth(base_url, email, password);
-    if (!session) {
-      console.warn("email or password seems to be wrong.");
+    try {
+      session = await make_auth(base_url, email, password);
+      if (!session) {
+        console.warn("email or password seems to be wrong.");
+      }
+    } catch (e) {
+      if (is_tls_cert_error(e)) {
+        console.error(tls_cert_help_message(e));
+        console.warn(
+          "Login uses Node's HTTPS client (always verifies). Fix the CA trust above, use http:// for local plain HTTP, or retry after fixing the cert.",
+        );
+      } else {
+        console.error("login failed:", e.message || e);
+      }
     }
   }
   const my_acc = await account_info(base_url, session);
@@ -251,6 +300,7 @@ If you want max performance you should choose no.`,
 
   const conf_object = {
     base_url: base_url,
+    verify_game_cert: verify_game_cert,
     session: session,
     cull_versions: true,
     enable_TYPECODE: typescript_enabled,
@@ -334,6 +384,10 @@ module.exports = {
   //official servers are "https://adventure.land"
   //make sure you trust the servers you are connecting to
   ${ezpz("base_url", "https://adventure.land")},
+  //verify WSS/HTTPS game-socket certificates (browser-like). false only for private
+  //HTTPS with mkcert/self-signed certs Node does not trust. Login/fetch always verifies;
+  //for mkcert use node --use-system-ca or NODE_EXTRA_CA_CERTS. ACME/Let's Encrypt: leave true.
+  ${ezpz("verify_game_cert", true)},
   //to obtain a session: show_json(parent.user_id+"-"+parent.user_auth)
   //or just delete the config file and restart caracAL
   ${ezpz("session", "1111111111111111-abc123ABCabc123ABCabc")}, 

@@ -2,6 +2,16 @@
 //the session key can be used to take over your account
 //and I would know.(<3 u Nex)
 module.exports = {
+  //base url of the server cluster
+  //official: "https://adventure.land"
+  //local plain HTTP: "http://localhost:8090" (no TLS; verify_game_cert unused)
+  //local Traefik/mkcert: "https://play.al.local" — trust mkcert in Node
+  //  (`node --use-system-ca` or NODE_EXTRA_CA_CERTS) or set verify_game_cert: false
+  base_url: "https://adventure.land",
+  //verify WSS game-socket certificates (default true, like a browser).
+  //set false only for private HTTPS with untrusted/self-signed certs.
+  //production private hosts should use Let's Encrypt / ACME and leave this true.
+  verify_game_cert: true,
   //to obtain a session: show_json(parent.user_id+"-"+parent.user_auth)
   //or just delete the config file and restart caracAL
   session: "1111111111111111-abc123ABCabc123ABCabc",

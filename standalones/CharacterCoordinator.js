@@ -80,6 +80,11 @@ function migrate_old_storage(path, localStorage) {
   // const cfg = require("../config");
   const cfg = require(CARACAL_CONFIG_PATH);
   const base_url = cfg.base_url || "https://adventure.land";
+  if (cfg.verify_game_cert === false) {
+    console.warn(
+      "verify_game_cert: false — game sockets will not verify TLS certificates (private/self-signed HTTPS only)",
+    );
+  }
 
   let latest_version = await game_files.ensure_latest(base_url);
   let ensure_latest_inflight = null;
@@ -377,6 +382,8 @@ function migrate_old_storage(path, localStorage) {
       cname: char_name,
       clid: ctype_to_clid[char.type] || -1,
       base_url: cfg.base_url || "https://adventure.land",
+      // Default true (browser-like). Set false only for private HTTPS with untrusted certs.
+      verify_game_cert: cfg.verify_game_cert !== false,
     };
     if (cfg.enable_TYPECODE) {
       args.typescript_file = char_block.typescript;
