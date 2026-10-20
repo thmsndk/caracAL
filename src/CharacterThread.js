@@ -14,6 +14,11 @@ try {
   };
 }
 const io = require("socket.io-client");
+const {
+  verified_io,
+  is_tls_cert_error,
+  tls_cert_help_message,
+} = require("./verified_io");
 const fs = require("fs").promises;
 const { JSDOM } = require("jsdom");
 const node_query = require("jquery");
@@ -222,7 +227,9 @@ async function make_game(proc_args) {
   console.log("constructing game instance");
   console.debug("source files:\n%s", game_sources);
   const game_context = make_context(null, proc_args.base_url);
-  game_context.io = io;
+  // Default: verify TLS like a browser. Private HTTPS (mkcert/self-signed) may set verify_game_cert: false.
+  const verify_game_cert = proc_args.verify_game_cert !== false;
+  game_context.io = verified_io(io, { verify: verify_game_cert });
   game_context.bowser = {};
   await ev_files(game_sources, game_context);
   // JSDOM+vm breaks AL clone()'s instanceof checks — see docs/jsdom-vm-realm-clone.md
@@ -499,6 +506,9 @@ async function make_game(proc_args) {
 
   game_context.socket.on("connect_error", (err) => {
     console.error(`connect_error due to ${err.message}`, err);
+    if (verify_game_cert && is_tls_cert_error(err)) {
+      console.error(tls_cert_help_message(err));
+    }
   });
 
   game_context.socket.on("game_error", (data) => {

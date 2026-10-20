@@ -4,6 +4,10 @@ Here you can review the historic development of caracAL.
 
 I do not bundle releases but with the timestamp you can usually find the relevant git commit.
 
+#### 2026-10-19
+
+Game sockets verify TLS by default (browser-like). Config `verify_game_cert` (default true) can disable that for private HTTPS with untrusted certs; setup prompts for it on custom `https://` servers. Cert failures print mkcert / `NODE_EXTRA_CA_CERTS` / `--use-system-ca` / ACME hints. Plain `http://localhost` is unchanged.
+
 #### 2026-09-30
 
 Replace Adventure Land `clone` after game/runner load with a realm-safe overlay so JSDOM+`vm.createContext` no longer throws `"type not supported"` on ordinary VM objects (common during `smart_move` / map travel). Background and a possible same-realm loader follow-up: `docs/jsdom-vm-realm-clone.md`.
