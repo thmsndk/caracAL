@@ -34,6 +34,12 @@ const {
   shouldRefreshClientForWelcome,
 } = require("./realm_rtt");
 const { apply_realm_safe_clone } = require("./realm_safe_clone");
+const {
+  evaluateSocketHealth,
+  shouldRedeployForConnectErrorStreak,
+  tapSocketInbound,
+  SOCKET_CONNECTED_NO_RX_MS,
+} = require("./socket_health");
 
 process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);
@@ -504,10 +510,40 @@ async function make_game(proc_args) {
   );
   console.log("game instance constructed");
 
+  // Silent socket death: game may never call disconnect(); redeploy ourselves.
+  // Also catch DNS zombies: sock.connected stays true with no inbound packets
+  // (live: EAI_AGAIN left the fleet silent ~75m while stat_beat kept the watchdog happy).
+  let saw_socket_connected = false;
+  let socket_down_since = null;
+  let last_socket_rx_at = Date.now();
+  let connect_error_streak = 0;
+  const note_socket_rx = () => {
+    last_socket_rx_at = Date.now();
+  };
+  tapSocketInbound(game_context.socket, note_socket_rx);
+  game_context.socket.on("connect", () => {
+    saw_socket_connected = true;
+    connect_error_streak = 0;
+    note_socket_rx();
+  });
+
   game_context.socket.on("connect_error", (err) => {
     console.error(`connect_error due to ${err.message}`, err);
     if (verify_game_cert && is_tls_cert_error(err)) {
       console.error(tls_cert_help_message(err));
+    }
+    connect_error_streak += 1;
+    if (
+      shouldRedeployForConnectErrorStreak({
+        sawConnected: saw_socket_connected,
+        streak: connect_error_streak,
+      })
+    ) {
+      connect_error_streak = 0;
+      console.warn(
+        "connect_error streak after prior connect — redeploying (likely DNS/network)",
+      );
+      extensions.deploy();
     }
   });
 
@@ -575,28 +611,36 @@ async function make_game(proc_args) {
     request_game_client_check("reloaded");
   });
 
-  // Silent socket death: game may never call disconnect(); redeploy ourselves.
-  let saw_socket_connected = false;
-  let socket_down_since = null;
   setInterval(() => {
     const sock = game_context.socket;
-    if (sock && sock.connected) {
+    const now = Date.now();
+    const verdict = evaluateSocketHealth({
+      now,
+      sawConnected: saw_socket_connected,
+      sockConnected: Boolean(sock && sock.connected),
+      socketDownSince: socket_down_since,
+      lastRxAt: last_socket_rx_at,
+    });
+    if (verdict.clearDownSince) {
       saw_socket_connected = true;
       socket_down_since = null;
+    }
+    if (verdict.markDownSince != null) {
+      socket_down_since = verdict.markDownSince;
+    }
+    if (!verdict.redeploy) {
       return;
     }
-    if (!saw_socket_connected) {
-      return;
+    if (verdict.reason === "connected_no_rx") {
+      console.warn(
+        `socket connected but no RX for ${Math.round(SOCKET_CONNECTED_NO_RX_MS / 1000)}s — redeploying`,
+      );
+      // Debounce so we don't deploy-storm while softkill is in flight.
+      last_socket_rx_at = now;
+    } else {
+      console.warn("socket down >15s after prior connect — redeploying");
+      socket_down_since = now + 45_000;
     }
-    if (socket_down_since == null) {
-      socket_down_since = Date.now();
-      return;
-    }
-    if (Date.now() - socket_down_since < 15_000) {
-      return;
-    }
-    console.warn("socket down >15s after prior connect — redeploying");
-    socket_down_since = Date.now() + 45_000;
     extensions.deploy();
   }, 2_000);
 
