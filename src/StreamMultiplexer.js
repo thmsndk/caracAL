@@ -96,25 +96,6 @@ function redirect_into_process(stdout, stderr, target_proc) {
   }
 }
 
-/**
- * CharacterThreads orphaned when CharacterCoordinator dies get reparented to
- * main and sit as zombies / hold auth slots. Best-effort sweep before restart
- * (Linux/docker; no-op on Windows / missing pkill).
- */
-function kill_orphan_character_threads() {
-  if (process.platform === "win32") {
-    return;
-  }
-  try {
-    execFile(
-      "pkill",
-      ["-9", "-f", "src/CharacterThread\\.js"],
-      { timeout: 5_000 },
-      () => {},
-    );
-  } catch (_) {}
-}
-
 function safe_kill(proc, signal = "SIGKILL") {
   if (!proc || proc.killed || proc.exitCode != null) {
     return;
@@ -125,29 +106,135 @@ function safe_kill(proc, signal = "SIGKILL") {
 }
 
 const COORDINATOR_RESTART_DELAY_MS = 2_500;
+const COORDINATOR_RESTART_DELAY_MAX_MS = 60_000;
+const COORDINATOR_STABLE_MS = 60_000;
+const COORDINATOR_MAX_FAILURES = 20;
+
+function is_coordinator_module(module_path) {
+  return /CharacterCoordinator\.js$/i.test(
+    String(module_path || "").replace(/\\/g, "/"),
+  );
+}
 
 /**
- * Start log sinks + CharacterCoordinator. If the coordinator exits, tear down
- * sinks/orphans and bring the stack back — otherwise main.js keeps idling with
- * dead character zombies and the fleet stays offline forever.
+ * Parse trailing options from setup_log_pipes(...args).
+ * Legacy callers pass only path strings; fleet supervision is opt-in via
+ * `{ superviseFleet: true }` or auto-detected CharacterCoordinator paths.
  */
-function setup_log_pipes(log_sinks, module_path, ...args) {
+function split_args_and_options(rest) {
+  if (
+    rest.length > 0 &&
+    rest[rest.length - 1] &&
+    typeof rest[rest.length - 1] === "object" &&
+    !Array.isArray(rest[rest.length - 1])
+  ) {
+    return {
+      args: rest.slice(0, -1),
+      options: rest[rest.length - 1],
+    };
+  }
+  return { args: rest, options: {} };
+}
+
+/**
+ * Kill CharacterThreads left behind when CharacterCoordinator dies.
+ * Prefer the coordinator's process group (forked with detached on Unix);
+ * fall back to a cmdline pkill only for that sweep path.
+ *
+ * @param {number | null | undefined} coordinatorPid
+ * @returns {Promise<void>}
+ */
+function kill_orphan_character_threads(coordinatorPid) {
+  if (process.platform === "win32") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+    const timer = setTimeout(done, 2_000);
+
+    if (coordinatorPid && Number.isFinite(coordinatorPid)) {
+      try {
+        // Negative pid = process group (coordinator was group leader via detached).
+        process.kill(-coordinatorPid, "SIGKILL");
+      } catch (_) {
+        /* group may already be gone */
+      }
+    }
+
+    execFile(
+      "pkill",
+      ["-9", "-f", "src/CharacterThread\\.js"],
+      { timeout: 5_000 },
+      () => {
+        clearTimeout(timer);
+        done();
+      },
+    );
+  });
+}
+
+function restart_delay_ms(failures) {
+  const exp = Math.min(Math.max(failures, 1) - 1, 5);
+  return Math.min(
+    COORDINATOR_RESTART_DELAY_MAX_MS,
+    COORDINATOR_RESTART_DELAY_MS * Math.pow(2, exp),
+  );
+}
+
+/**
+ * Start log sinks + a forked module (CharacterCoordinator or webpack watch).
+ *
+ * Fleet supervision (`superviseFleet` / CharacterCoordinator path only):
+ * if the coordinator exits, tear down sinks, sweep orphan CharacterThreads,
+ * and restart with backoff — otherwise main.js idles forever with zombies.
+ *
+ * Webpack / other modules keep historical behavior: no auto-restart, no pkill.
+ */
+function setup_log_pipes(log_sinks, module_path, ...rest) {
+  const { args, options } = split_args_and_options(rest);
+  const superviseFleet =
+    options.superviseFleet === true ||
+    (options.superviseFleet !== false && is_coordinator_module(module_path));
+
   let generation = 0;
   let runner = null;
+  let failures = 0;
+  let stableTimer = null;
+
+  function clear_stable_timer() {
+    if (stableTimer) {
+      clearTimeout(stableTimer);
+      stableTimer = null;
+    }
+  }
 
   function start() {
     const gen = ++generation;
+    clear_stable_timer();
     const sinks = (log_sinks || []).map((command) =>
       command ? spawn_sink(...command) : null,
     );
     if (sinks.length < 1) {
-      // Preserve historical fallback: at least inherit to process stdio.
       sinks.push(null);
     }
 
-    runner = fork(module_path, args, {
+    const forkOpts = {
       stdio: ["inherit", "pipe", "pipe", "ipc"],
-    });
+    };
+    // New process group so we can SIGKILL orphans via -pid when coordinator dies.
+    if (superviseFleet && process.platform !== "win32") {
+      forkOpts.detached = true;
+    }
+
+    runner = fork(module_path, args, forkOpts);
+    const runnerPid = runner.pid;
     const stdout_clone = cloneable(runner.stdout);
     const stderr_clone = cloneable(runner.stderr);
 
@@ -160,23 +247,53 @@ function setup_log_pipes(log_sinks, module_path, ...args) {
     }
     redirect_into_process(stdout_clone, stderr_clone, sinks[0]);
 
+    if (superviseFleet) {
+      stableTimer = setTimeout(() => {
+        if (gen === generation) {
+          failures = 0;
+        }
+      }, COORDINATOR_STABLE_MS);
+    }
+
     runner.on("exit", (code, signal) => {
       if (gen !== generation) {
         return;
       }
-      console.error(
-        `CharacterCoordinator exited code=${code} signal=${signal} — restarting in ${Math.round(COORDINATOR_RESTART_DELAY_MS / 1000)}s`,
-      );
+      clear_stable_timer();
       for (const sink of sinks) {
         safe_kill(sink);
       }
-      kill_orphan_character_threads();
-      setTimeout(() => {
-        if (gen !== generation) {
-          return;
-        }
-        start();
-      }, COORDINATOR_RESTART_DELAY_MS);
+
+      if (!superviseFleet) {
+        console.error(
+          `${module_path} exited code=${code} signal=${signal} (no auto-restart)`,
+        );
+        return;
+      }
+
+      failures += 1;
+      if (failures > COORDINATOR_MAX_FAILURES) {
+        console.error(
+          `CharacterCoordinator exited code=${code} signal=${signal} — giving up after ${failures} failures`,
+        );
+        return;
+      }
+
+      const delay = restart_delay_ms(failures);
+      console.error(
+        `CharacterCoordinator exited code=${code} signal=${signal} — restarting in ${Math.round(delay / 1000)}s (failure ${failures}/${COORDINATOR_MAX_FAILURES})`,
+      );
+
+      Promise.resolve(kill_orphan_character_threads(runnerPid))
+        .catch(() => {})
+        .then(() => {
+          setTimeout(() => {
+            if (gen !== generation) {
+              return;
+            }
+            start();
+          }, delay);
+        });
     });
 
     return runner;
@@ -189,5 +306,9 @@ module.exports = {
   setup_log_pipes,
   spawn_sink,
   kill_orphan_character_threads,
+  is_coordinator_module,
+  restart_delay_ms,
   COORDINATOR_RESTART_DELAY_MS,
+  COORDINATOR_RESTART_DELAY_MAX_MS,
+  COORDINATOR_MAX_FAILURES,
 };

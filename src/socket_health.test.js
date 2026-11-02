@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   evaluateSocketHealth,
   shouldRedeployForConnectErrorStreak,
+  tapSocketInbound,
   SOCKET_CONNECTED_NO_RX_MS,
   SOCKET_DOWN_REDEPLOY_MS,
   CONNECT_ERROR_STREAK_REDEPLOY,
@@ -96,5 +97,32 @@ describe("socket_health", () => {
       }),
       true,
     );
+  });
+
+  it("tapSocketInbound counts engine.io packets and onAny events", () => {
+    let n = 0;
+    const engineHandlers = {};
+    const sock = {
+      io: {
+        engine: {
+          on(ev, fn) {
+            engineHandlers[ev] = fn;
+          },
+        },
+      },
+      onAny(fn) {
+        sock._onAny = fn;
+      },
+    };
+    tapSocketInbound(sock, () => {
+      n += 1;
+    });
+    tapSocketInbound(sock, () => {
+      n += 100;
+    }); // idempotent
+    assert.equal(typeof engineHandlers.packet, "function");
+    engineHandlers.packet();
+    sock._onAny();
+    assert.equal(n, 2);
   });
 });

@@ -71,5 +71,6 @@ async function get_webpack_started(cfg) {
     log_sinks,
     COORDINATOR_MODULE_PATH,
     configPath,
+    { superviseFleet: true },
   );
 })();

@@ -69,6 +69,16 @@ function shouldRedeployForConnectErrorStreak(args) {
 function tapSocketInbound(sock, onRx) {
   if (!sock || sock.__caracalRxTap) return;
   sock.__caracalRxTap = true;
+  // engine.io keepalive (PING/PONG) never reaches socket.io onAny — count it
+  // so a quiet-but-alive transport does not trip connected_no_rx.
+  try {
+    const engine = sock.io && sock.io.engine;
+    if (engine && typeof engine.on === "function") {
+      engine.on("packet", onRx);
+    }
+  } catch (_) {
+    /* ignore */
+  }
   if (typeof sock.onAny === "function") {
     sock.onAny(() => {
       onRx();
