@@ -45,6 +45,29 @@ process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);
 });
 
+/**
+ * Coordinator serializes the_game() / socket open (server kicks after >5 loose
+ * connections). Port of mrdiamond12312/caracAL@4c997ed.
+ */
+function await_login_turn() {
+  return new Promise((resolve) => {
+    const on_message = (m) => {
+      if (m.type == "login_turn_grant") {
+        process.off("message", on_message);
+        resolve();
+      }
+    };
+    process.on("message", on_message);
+    process.send({ type: "login_turn_request" });
+  });
+}
+
+function release_login_turn() {
+  try {
+    process.send({ type: "login_turn_release" });
+  } catch (_) {}
+}
+
 const html_spoof = `<!DOCTYPE html>
 <html>
 <head>
@@ -377,6 +400,7 @@ async function make_game(proc_args) {
   game_context.new_game_logic = function () {
     old_ng_logic();
     clear_first_load_reload();
+    release_login_turn();
     //people reported bad performance when switching maps
     //and this allegedly fixes it.
     vm.runInContext("pause()", game_context);
@@ -403,9 +427,24 @@ async function make_game(proc_args) {
     } catch (e) {
       console.error("disconnect() error", e);
     }
+    release_login_turn();
     // AL auto_reload uses location.href / CLI kill — neither restarts caracAL.
     // Always ask the coordinator to softkill+respawn this client.
-    extensions.deploy();
+    const reason = game_context.disconnect_reason;
+    if (
+      typeof reason == "string" &&
+      reason.startsWith("Too many loose connections")
+    ) {
+      // Some loose sockets may not be ours (browser tab). Jitter avoids a
+      // redeploy stampede that immediately re-trips the same kick.
+      const delay = 1000 + Math.random() * 2000;
+      console.log(
+        `too many loose connections, redeploying in ${(delay / 1000).toFixed(1)}s`,
+      );
+      setTimeout(() => extensions.deploy(), delay);
+    } else {
+      extensions.deploy();
+    }
   };
 
   async function api_call_with_auth_cookie(method, args, r_args) {
@@ -495,6 +534,8 @@ async function make_game(proc_args) {
         break;
     }
   });
+  // Socket opens in the_game(); serialize so we stay under the loose-socket cap.
+  await await_login_turn();
   vm.runInContext("the_game()", game_context);
   reload_task = setTimeout(
     function () {

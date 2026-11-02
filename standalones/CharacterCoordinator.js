@@ -12,6 +12,7 @@ const {
   LOCALSTORAGE_ROTA_PATH,
   STAT_BEAT_INTERVAL,
   STALE_STAT_BEAT_MS,
+  LOCAL_STALE_STAT_BEAT_MS,
   CHAR_WATCHDOG_INTERVAL_MS,
 } = require("../src/CONSTANTS");
 const { log, console, ctype_to_clid } = require("../src/LogUtils");
@@ -193,6 +194,65 @@ function migrate_old_storage(path, localStorage) {
     }
   }
 
+  // One login at a time — server kicks loose sockets once more than ~5 are open.
+  // Port of mrdiamond12312/caracAL@4c997ed (complements INITIAL_START_STAGGER_MS).
+  const LOGIN_TURN_TIMEOUT = 10_000;
+  const login_turn = {
+    holder: null, // {char_name, proc, granted_at, timer}
+    queue: [], // [{char_name, proc}]
+  };
+
+  function login_turn_grant_next() {
+    if (login_turn.holder) {
+      return;
+    }
+    const next = login_turn.queue.shift();
+    if (!next) {
+      return;
+    }
+    const holder = { ...next, granted_at: Date.now() };
+    holder.timer = setTimeout(() => {
+      console.warn(
+        `login turn of ${holder.char_name} timed out after ${LOGIN_TURN_TIMEOUT / 1000}s`,
+      );
+      login_turn_release(holder.proc, "timeout");
+    }, LOGIN_TURN_TIMEOUT);
+    login_turn.holder = holder;
+    const waiting = login_turn.queue.map((x) => x.char_name);
+    console.log(
+      `login turn granted to ${holder.char_name}` +
+        (waiting.length > 0 ? ` (waiting: ${waiting.join(", ")})` : ""),
+    );
+    safe_send(holder.proc, { type: "login_turn_grant" });
+  }
+
+  function login_turn_request(char_name, proc) {
+    const holds = login_turn.holder && login_turn.holder.proc === proc;
+    if (holds || login_turn.queue.some((x) => x.proc === proc)) {
+      return;
+    }
+    login_turn.queue.push({ char_name, proc });
+    login_turn_grant_next();
+  }
+
+  function login_turn_release(proc, reason) {
+    const holder = login_turn.holder;
+    if (!holder || holder.proc !== proc) {
+      return;
+    }
+    clearTimeout(holder.timer);
+    login_turn.holder = null;
+    const held_for = ((Date.now() - holder.granted_at) / 1000).toFixed(1);
+    console.log(
+      `login turn released by ${holder.char_name} after ${held_for}s (${reason})`,
+    );
+    login_turn_grant_next();
+  }
+
+  function login_turn_dequeue(proc) {
+    login_turn.queue = login_turn.queue.filter((x) => x.proc !== proc);
+  }
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -246,6 +306,8 @@ function migrate_old_storage(path, localStorage) {
     // overwrite char_block.monitor (ghost Loading…/0% panels).
     detach_and_destroy_monitor(char_block);
     if (proc) {
+      login_turn_dequeue(proc);
+      login_turn_release(proc, "softkill");
       if (was_connected) {
         console.log("telling client to self-terminate");
         safe_send(proc, {
@@ -277,6 +339,12 @@ function migrate_old_storage(path, localStorage) {
 
   const AUTH_FAIL_BACKOFF_BASE_MS = 30_000;
   const AUTH_FAIL_BACKOFF_MAX_MS = 10 * 60_000;
+  /** Early crash/exit before first connected (e.g. game.js map null under load). */
+  const BOOT_FAIL_BACKOFF_BASE_MS = 15_000;
+  const BOOT_FAIL_BACKOFF_MAX_MS = 5 * 60_000;
+  const EARLY_BOOT_FAIL_MS = 90_000;
+  /** Stagger initial forks so one caracAL does not slam the realm at t=0. */
+  const INITIAL_START_STAGGER_MS = 2_500;
 
   function note_auth_fail(char_block, char_name, reason) {
     const strikes = (char_block.auth_fail_strikes || 0) + 1;
@@ -296,14 +364,35 @@ function migrate_old_storage(path, localStorage) {
     char_block.auth_backoff_until = 0;
   }
 
-  async function wait_auth_backoff(char_name, char_block) {
-    const until = char_block.auth_backoff_until || 0;
+  function note_boot_fail(char_block, char_name, reason) {
+    const strikes = (char_block.boot_fail_strikes || 0) + 1;
+    char_block.boot_fail_strikes = strikes;
+    const wait = Math.min(
+      BOOT_FAIL_BACKOFF_MAX_MS,
+      BOOT_FAIL_BACKOFF_BASE_MS * Math.pow(2, Math.min(strikes - 1, 5)),
+    );
+    char_block.boot_backoff_until = Date.now() + wait;
+    console.warn(
+      `boot_fail ${char_name} strike=${strikes} reason=${reason} — backoff ${Math.round(wait / 1000)}s`,
+    );
+  }
+
+  function clear_boot_fail(char_block) {
+    char_block.boot_fail_strikes = 0;
+    char_block.boot_backoff_until = 0;
+  }
+
+  async function wait_start_backoff(char_name, char_block) {
+    const until = Math.max(
+      char_block.auth_backoff_until || 0,
+      char_block.boot_backoff_until || 0,
+    );
     const wait = until - Date.now();
     if (wait <= 0) {
       return;
     }
     console.warn(
-      `deferring start of ${char_name} for ${Math.round(wait / 1000)}s (auth backoff)`,
+      `deferring start of ${char_name} for ${Math.round(wait / 1000)}s (start backoff)`,
     );
     await sleep(wait);
   }
@@ -324,7 +413,7 @@ function migrate_old_storage(path, localStorage) {
 
   async function do_start_char(char_name) {
     const char_block = character_manage[char_name];
-    await wait_auth_backoff(char_name, char_block);
+    await wait_start_backoff(char_name, char_block);
     // Never fork on top of a live child — that orphans the old process and
     // leaves it holding the character auth slot (authentication_failed thrash).
     if (char_block.instance) {
@@ -332,7 +421,8 @@ function migrate_old_storage(path, localStorage) {
         `do_start_char ${char_name}: existing instance still present — softkilling first`,
       );
       await softkill_block(char_block);
-      await sleep(50);
+      // Let the softkilled exit handler run (orphan path) before we clear suppress.
+      await sleep(250);
     }
     char_block.suppress_auto_restart = false;
     let realm = my_acc.resolve_realm(char_block.realm);
@@ -384,6 +474,9 @@ function migrate_old_storage(path, localStorage) {
       base_url: cfg.base_url || "https://adventure.land",
       // Default true (browser-like). Set false only for private HTTPS with untrusted certs.
       verify_game_cert: cfg.verify_game_cert !== false,
+      // Optional first-load softkill deadline (ms). Localhost already uses a
+      // higher floor; set this (or CARACAL_LOAD_DEADLINE_MS) to override.
+      load_deadline_ms: cfg.load_deadline_ms,
     };
     if (cfg.enable_TYPECODE) {
       args.typescript_file = char_block.typescript;
@@ -418,6 +511,12 @@ function migrate_old_storage(path, localStorage) {
     pump_child_stdio(result.stderr, process.stderr);
     char_block.instance = result;
     char_block.last_stat_beat = Date.now();
+    // Per-fork boot clock (closure). Shared char_block.boot_started_at races when
+    // softkill nulls instance and forks a replacement before the old exit fires.
+    const bootStartedAt = Date.now();
+    let bootReachedConnected = false;
+    char_block.boot_started_at = bootStartedAt;
+    char_block.boot_reached_connected = false;
     // Bind exit cleanup to *this* fork's monitor — never char_block.monitor,
     // which may already belong to a replacement process after softkill race.
     let process_monitor = null;
@@ -426,13 +525,30 @@ function migrate_old_storage(path, localStorage) {
         char_block.monitor = null;
       }
       destroy_monitor(process_monitor);
-      char_block.connected = false;
-      if (char_block.instance === result) {
+      login_turn_dequeue(result);
+      login_turn_release(result, "exited");
+      // softkill() nulls instance before SIGKILL so a replacement can fork.
+      // That orphan exit must NOT clear suppress / auto-restart / boot_fail —
+      // otherwise we storm (early_exit after 0s) and disconnect mid cave_enter.
+      const isCurrent = char_block.instance === result;
+      if (isCurrent) {
         char_block.instance = null;
+        char_block.connected = false;
+      }
+      if (!isCurrent) {
+        return;
       }
       const suppress = char_block.suppress_auto_restart;
       char_block.suppress_auto_restart = false;
       if (char_block.enabled && !suppress) {
+        const lived = Date.now() - bootStartedAt;
+        if (!bootReachedConnected && lived < EARLY_BOOT_FAIL_MS) {
+          note_boot_fail(
+            char_block,
+            char_name,
+            `early_exit after ${Math.round(lived / 1000)}s`,
+          );
+        }
         start_char(char_name).catch((e) => {
           console.error(`failed to restart ${char_name}`, e);
         });
@@ -452,10 +568,24 @@ function migrate_old_storage(path, localStorage) {
         case "stat_beat":
           char_block.last_stat_beat = Date.now();
           break;
+        case "login_turn_request":
+          login_turn_request(char_name, result);
+          break;
+        case "login_turn_release":
+          login_turn_release(result, "released");
+          break;
         case "connected":
+          if (char_block.instance !== result) {
+            break;
+          }
+          // new_game_logic usually released already; idempotent if still holding.
+          login_turn_release(result, "connected");
+          bootReachedConnected = true;
           char_block.connected = true;
+          char_block.boot_reached_connected = true;
           char_block.last_stat_beat = Date.now();
           clear_auth_fail(char_block);
+          clear_boot_fail(char_block);
           update_siblings_and_acc(my_acc.response);
           break;
         case "auth_fail":
@@ -674,16 +804,40 @@ function migrate_old_storage(path, localStorage) {
     }),
   );
 
+  let initial_start_i = 0;
   for (const c_name of Object.keys(character_manage)) {
     const char = character_manage[c_name];
     char.connected = false;
     if (char.enabled) {
-      start_char(c_name).catch((e) => {
-        console.error(`failed to start ${c_name}`, e);
-      });
+      const delay = initial_start_i * INITIAL_START_STAGGER_MS;
+      initial_start_i += 1;
+      setTimeout(() => {
+        start_char(c_name).catch((e) => {
+          console.error(`failed to start ${c_name}`, e);
+        });
+      }, delay);
     }
   }
   my_acc.add_listener(update_siblings_and_acc);
+
+  function resolveStaleStatBeatMs() {
+    const env = Number(process.env.CARACAL_STALE_STAT_BEAT_MS);
+    if (Number.isFinite(env) && env >= 5_000) return Math.floor(env);
+    try {
+      const host = new URL(cfg.base_url || "https://adventure.land").hostname;
+      if (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host.endsWith(".localhost")
+      ) {
+        return LOCAL_STALE_STAT_BEAT_MS;
+      }
+    } catch (_) {}
+    return STALE_STAT_BEAT_MS;
+  }
+  const staleStatBeatMs = resolveStaleStatBeatMs();
+  console.log(`stat_beat watchdog stale limit ${Math.round(staleStatBeatMs / 1000)}s`);
 
   // Redeploy zombie clients that stop heartbeating (hung CODE / blocked stdio /
   // silent socket death without an exit). Default softkill sets
@@ -697,7 +851,7 @@ function migrate_old_storage(path, localStorage) {
       }
       const last = block.last_stat_beat || 0;
       const age = now - last;
-      if (age < STALE_STAT_BEAT_MS) {
+      if (age < staleStatBeatMs) {
         continue;
       }
       console.warn(
