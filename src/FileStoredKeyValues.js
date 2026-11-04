@@ -40,6 +40,23 @@ class FileStoredKeyValues {
     return true;
   }
 
+  #ingestLine(line) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return;
+    try {
+      const [key, value] = entries(JSON.parse(trimmed))[0];
+      if (value === null) {
+        this.#backend.delete(key);
+      } else {
+        this.#backend.set(key, value);
+      }
+    } catch (err) {
+      console.error(
+        `FileStoredKeyValues: skipping corrupt line (${err.message}): ${trimmed.slice(0, 120)}`,
+      );
+    }
+  }
+
   #initializeHandle() {
     if (
       this.#checkFileExistence(this.#replacer_path) &&
@@ -47,23 +64,23 @@ class FileStoredKeyValues {
     ) {
       fs.renameSync(this.#replacer_path, this.#main_path);
     }
+    // Stream line-by-line — readFileSync OOMs / ERR_STRING_TOO_LONG once the
+    // append log grows past ~512MiB (seen live at 590MiB before compact).
     this.#handle = fs.openSync(this.#main_path, "a+");
-    const handle_contents = fs.readFileSync(this.#handle, "utf8").split("\n");
-    for (let line of handle_contents) {
-      const trimmed = line.trim();
-      if (trimmed.length === 0) continue;
-      try {
-        const [key, value] = entries(JSON.parse(trimmed))[0];
-        if (value === null) {
-          this.#backend.delete(key);
-        } else {
-          this.#backend.set(key, value);
-        }
-      } catch (err) {
-        console.error(
-          `FileStoredKeyValues: skipping corrupt line (${err.message}): ${trimmed.slice(0, 120)}`,
-        );
+    const buf = Buffer.alloc(1024 * 1024);
+    let leftover = "";
+    for (;;) {
+      const n = fs.readSync(this.#handle, buf, 0, buf.length, null);
+      if (n === 0) break;
+      leftover += buf.toString("utf8", 0, n);
+      let nl;
+      while ((nl = leftover.indexOf("\n")) >= 0) {
+        this.#ingestLine(leftover.slice(0, nl));
+        leftover = leftover.slice(nl + 1);
       }
+    }
+    if (leftover.length > 0) {
+      this.#ingestLine(leftover);
     }
   }
 
@@ -102,6 +119,14 @@ class FileStoredKeyValues {
         encoding: "utf8",
       });
       this.#backend.set(key, value);
+      // Large cstore values (loot/history) append multi-MB lines; don't wait for
+      // the 30s timer or the jsonl balloons past 100MB and starves the event loop.
+      try {
+        const st = fs.fstatSync(this.#handle);
+        if (st.size > 32 * 1024 * 1024) {
+          this.refactor();
+        }
+      } catch (_) {}
     }
     return this;
   }

@@ -258,12 +258,24 @@ function migrate_old_storage(path, localStorage) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /** Forward child stdio without `.pipe()` backpressure (freezes game clients). */
+  /**
+   * Forward child stdio without `.pipe()` / `src.pause()` backpressure — pausing
+   * freezes game clients. When dest cannot keep up, drop further chunks until
+   * drain; unbounded write() buffering was ballooning CharacterCoordinator RSS
+   * (10GB+/h → WSL OOM → Docker API hang / EIO).
+   */
   function pump_child_stdio(src, dest) {
+    let dropping = false;
     src.on("data", (chunk) => {
+      if (dropping || !dest.writable) {
+        return;
+      }
       try {
-        if (dest.writable) {
-          dest.write(chunk);
+        if (!dest.write(chunk)) {
+          dropping = true;
+          dest.once("drain", () => {
+            dropping = false;
+          });
         }
       } catch (_) {}
     });
