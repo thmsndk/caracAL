@@ -55,3 +55,5 @@ Hard parts to design carefully:
 - Behaviour regressions need the same red checks as B (VM literal clone, Node JSON clone, `smart_move` smoke).
 
 Until A lands, keep B applied on both game and runner contexts after `ev_files` of first-party scripts.
+
+Upstream root-fix PR: [numbereself/caracAL#27](https://github.com/numbereself/caracAL/pull/27) (page realm / browser-like `instanceof`). Related stall: official `game.js` leaves `cframe_ms` uncapped after long sleeps; caracAL re-clamps to 2s in `patch_official_game_js.js` so catch-up cannot freeze the Node event loop (live: `cframe_ms is 40000–110000` before softkills).

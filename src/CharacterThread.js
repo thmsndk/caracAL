@@ -42,6 +42,10 @@ const {
 } = require("./socket_health");
 const { safeSendCodeMessage } = require("./safe_send_cm");
 const { isDnsLikeError } = require("./network_health");
+const {
+  patchOfficialGameJs,
+  isOfficialGameJsPath,
+} = require("./patch_official_game_js");
 
 process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);
@@ -116,6 +120,15 @@ function make_context(upper = null, base_url) {
 async function ev_files(locations, context) {
   for (let location of locations) {
     let text = await fs.readFile(location, "utf8");
+    if (isOfficialGameJsPath(location)) {
+      const patched = patchOfficialGameJs(text);
+      if (patched.patched) {
+        console.log(
+          "patched official game.js: clamp cframe/mframe catch-up to 2s (anti-stall)",
+        );
+        text = patched.text;
+      }
+    }
     vm.runInContext(text + "\n//# sourceURL=file://" + location, context);
   }
 }
