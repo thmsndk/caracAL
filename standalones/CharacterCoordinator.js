@@ -16,6 +16,7 @@ const {
   CHAR_WATCHDOG_INTERVAL_MS,
 } = require("../src/CONSTANTS");
 const { log, console, ctype_to_clid } = require("../src/LogUtils");
+const { isAccountDnsOutage } = require("../src/network_health");
 
 const FileStoredKeyValues = require("../src/FileStoredKeyValues");
 
@@ -843,8 +844,20 @@ function migrate_old_storage(path, localStorage) {
   // silent socket death without an exit). Default softkill sets
   // suppress_auto_restart — must start_char explicitly (same as auth_fail),
   // otherwise the character stays permanently offline.
+  // During adventure.land DNS outages, pause redeploys — softkill storms cannot
+  // reconnect and race null sockets (live: EAI_AGAIN → Hard-terminate thrash).
+  let lastDnsOutageLogAt = 0;
   setInterval(() => {
     const now = Date.now();
+    if (isAccountDnsOutage(now)) {
+      if (now - lastDnsOutageLogAt > 60_000) {
+        lastDnsOutageLogAt = now;
+        console.warn(
+          "watchdog: pausing redeploys — adventure.land DNS/network outage",
+        );
+      }
+      return;
+    }
     for (const [name, block] of Object.entries(character_manage)) {
       if (!block.enabled || !block.instance || !block.connected) {
         continue;

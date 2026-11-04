@@ -40,6 +40,8 @@ const {
   tapSocketInbound,
   SOCKET_CONNECTED_NO_RX_MS,
 } = require("./socket_health");
+const { safeSendCodeMessage } = require("./safe_send_cm");
+const { isDnsLikeError } = require("./network_health");
 
 process.on("unhandledRejection", function (exception) {
   console.warn("promise rejected: \n", exception);
@@ -530,25 +532,53 @@ async function make_game(proc_args) {
         });
         break;
       case "send_cm":
-        game_context.send_code_message(m.to, m.data);
+        // Softkill / DNS drop leaves socket null — never crash the child on IPC CM.
+        if (!safeSendCodeMessage(game_context.socket, m.to, m.data)) {
+          // no-op when socket is down
+        }
         break;
     }
   });
   // Socket opens in the_game(); serialize so we stay under the loose-socket cap.
   await await_login_turn();
   vm.runInContext("the_game()", game_context);
-  reload_task = setTimeout(
-    function () {
-      if (auth_fail_handled) {
+
+  // Wrap AL send_code_message so CODE / IPC never throw on a torn-down socket.
+  if (typeof game_context.send_code_message === "function") {
+    const alSendCm = game_context.send_code_message.bind(game_context);
+    game_context.send_code_message = function caracalSafeSendCm(to, data) {
+      if (!game_context.socket || typeof game_context.socket.emit !== "function") {
         return;
       }
-      console.warn(
-        `game not loaded after ${Math.round(reload_timeout_ms / 1000)}s (rtt≈${rttMs}ms), reloading`,
-      );
-      extensions.deploy();
-    },
-    reload_timeout_ms + 100,
-  );
+      try {
+        return alSendCm(to, data);
+      } catch (e) {
+        console.warn(
+          "send_code_message skipped (socket down):",
+          e && e.message ? e.message : e,
+        );
+      }
+    };
+  }
+
+  function armFirstLoadReload(delayMs) {
+    if (reload_task) {
+      clearTimeout(reload_task);
+    }
+    reload_task = setTimeout(
+      function () {
+        if (auth_fail_handled) {
+          return;
+        }
+        console.warn(
+          `game not loaded after ${Math.round(delayMs / 1000)}s (rtt≈${rttMs}ms), reloading`,
+        );
+        extensions.deploy();
+      },
+      delayMs + 100,
+    );
+  }
+  armFirstLoadReload(reload_timeout_ms);
   console.log("game instance constructed");
 
   // Silent socket death: game may never call disconnect(); redeploy ourselves.
@@ -572,6 +602,14 @@ async function make_game(proc_args) {
     console.error(`connect_error due to ${err.message}`, err);
     if (verify_game_cert && is_tls_cert_error(err)) {
       console.error(tls_cert_help_message(err));
+    }
+    // Cold-boot DNS storms: push first-load deadline out instead of 60s thrash.
+    if (!saw_socket_connected && isDnsLikeError(err)) {
+      const pushMs = Math.min(120_000, Math.max(reload_timeout_ms * 2, 45_000));
+      console.warn(
+        `DNS/network connect_error before load — extending first-load deadline to ${Math.round(pushMs / 1000)}s`,
+      );
+      armFirstLoadReload(pushMs);
     }
     connect_error_streak += 1;
     if (
